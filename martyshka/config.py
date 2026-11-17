@@ -155,6 +155,24 @@ FACE_COLORS = {
 # Размеры для меню
 FACE_SIZES = {"маленький": 100, "средний": 130, "большой": 170, "огромный": 220}
 
+# ---------- СТУДИЯ (окно-чат с агентом) ----------
+# Каким мозгом решать задачи: "auto" (Claude, если есть ключ → Ollama Cloud → модель на ПК),
+# "claude", "ollama_cloud" или "local"
+STUDIO_TASK_BRAIN = "auto"
+STUDIO_CLAUDE_KEY = ""               # ключ с console.anthropic.com — вставляется в настройках студии
+STUDIO_CLAUDE_MODEL = "claude-opus-5-5"
+STUDIO_CLAUDE_EFFORT = "high"        # low / medium / high / xhigh — выше = умнее, но дольше и дороже
+STUDIO_OLLAMA_CLOUD_MODEL = ""       # например "glm-5.3:cloud" (сначала «ollama signin» в консоли)
+STUDIO_LOCAL_AGENT_MODEL = ""        # пусто = твоя MODEL, если она умеет инструменты, иначе gemma4
+STUDIO_LOCAL_CTX = 16384             # память локального мозга в студии (больше = длиннее задачи)
+# Супер-мозг для программирования: включается сам, когда просишь что-то написать, и выгружается после
+STUDIO_SUPER_MODEL = "qwen3.6:35b-a3b"
+STUDIO_SUPER_CTX = 32768
+STUDIO_AUTO_COMMANDS = False         # True = команды в папке проектов выполнять без вопроса
+STUDIO_MAX_STEPS = 40                # сколько шагов агент может сделать за одну задачу
+# Папка, где агент свободно создаёт файлы и проекты
+STUDIO_WORKSPACE = Path.home() / "Documents" / "Проекты Мартышки"
+
 # Своими словами — что добавить к характеру Мартышки (из окна настроек)
 PERSONALITY_EXTRA = ""
 
