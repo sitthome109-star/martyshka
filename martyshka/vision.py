@@ -53,13 +53,19 @@ def _png(img) -> bytes:
     return buf.getvalue()
 
 
+# Студия может попросить смотреть ТЕМ ЖЕ мозгом, что сейчас загружен (иначе видеокарта будет перегружать модели)
+MODEL_OVERRIDE: str = ""
+CTX_OVERRIDE: int = 0
+
+
 def _see(prompt: str, img, max_tokens: int = 400, temperature: float = 0.2) -> str:
     import ollama
-    extra = {"think": False} if config.MODEL.lower().startswith(("qwen3", "gemma4")) else {}
+    model = MODEL_OVERRIDE or config.MODEL
+    extra = {"think": False} if model.lower().startswith(("qwen3", "gemma4")) else {}
     imgs = img if isinstance(img, list) else [img]
-    r = ollama.Client().chat(model=config.MODEL, keep_alive=config.KEEP_ALIVE, **extra,
+    r = ollama.Client().chat(model=model, keep_alive=config.KEEP_ALIVE, **extra,
                              messages=[{"role": "user", "content": prompt, "images": [_png(i) for i in imgs]}],
-                             options={"num_ctx": config.CONTEXT_SIZE, "temperature": temperature,
+                             options={"num_ctx": CTX_OVERRIDE or config.CONTEXT_SIZE, "temperature": temperature,
                                       "num_predict": max_tokens})
     return r["message"]["content"].strip()
 

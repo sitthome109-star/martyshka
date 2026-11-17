@@ -6,388 +6,618 @@
 <title>Мартышка — Студия</title>
 <style>
 :root{
-  --bg:#0b0d12; --bg2:#10131a; --panel:#141822; --panel2:#1a1f2b; --line:#232a38; --line2:#2d3546;
-  --text:#e8ecf4; --muted:#8b93a7; --dim:#5d6578;
-  --acc:#2a9cff; --acc2:#7b5cff; --ok:#3ddc97; --bad:#ff5d6c; --warn:#ffb547;
-  --grad:linear-gradient(135deg,#2a9cff 0%,#7b5cff 100%);
-  --r:14px; --mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
+  --bg:#07080c; --glass:rgba(18,21,30,.62); --glass2:rgba(26,30,42,.72); --line:rgba(255,255,255,.07); --line2:rgba(255,255,255,.12);
+  --text:#eef1f8; --muted:#9097ab; --dim:#5f6679;
+  --acc:#4fb3ff; --acc2:#8b5cff; --acc3:#2ee6c5; --ok:#3ddc97; --bad:#ff5d6c; --warn:#ffb547;
+  --grad:linear-gradient(135deg,#4fb3ff 0%,#8b5cff 100%);
+  --mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
 }
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
-  font:15px/1.6 "Segoe UI Variable Text","Segoe UI",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);overflow:hidden;
+  font:15px/1.6 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
 button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
-::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#262d3b;border-radius:10px;border:3px solid transparent;background-clip:content-box}
-.app{display:grid;grid-template-columns:272px 1fr;height:100vh}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.09);border-radius:10px;border:3px solid transparent;background-clip:content-box}
+::selection{background:rgba(79,179,255,.35)}
 
-/* ---------- боковая панель ---------- */
-.side{background:var(--bg2);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
-.brand{display:flex;align-items:center;gap:12px;padding:20px 18px 14px}
-.orb{width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#bfe3ff 0%,#2a9cff 35%,#5b3dff 75%,#1b1440 100%);
-  box-shadow:0 0 24px rgba(42,156,255,.45);flex:none;animation:breath 4s ease-in-out infinite}
-.orb.busy{animation:spin 1.4s linear infinite, breath 1.2s ease-in-out infinite}
-@keyframes breath{50%{box-shadow:0 0 34px rgba(123,92,255,.6)}}
-@keyframes spin{to{filter:hue-rotate(360deg)}}
-.brand b{font-size:16px;letter-spacing:.2px}.brand small{display:block;color:var(--muted);font-size:12px;margin-top:-2px}
-.newbtn{margin:6px 14px 10px;padding:11px 14px;border-radius:12px;background:var(--grad);font-weight:600;
-  display:flex;align-items:center;gap:10px;box-shadow:0 6px 20px rgba(42,156,255,.25);transition:transform .15s,filter .15s}
+/* ---------- живой дымчатый фон ---------- */
+.bgfx{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+.bgfx i{position:absolute;border-radius:50%;filter:blur(90px);opacity:.38;will-change:transform}
+.bgfx i:nth-child(1){width:620px;height:620px;left:-140px;top:-160px;background:#1d4fd8;animation:drift1 26s ease-in-out infinite}
+.bgfx i:nth-child(2){width:540px;height:540px;right:-160px;top:10%;background:#6d2fe0;animation:drift2 32s ease-in-out infinite}
+.bgfx i:nth-child(3){width:480px;height:480px;left:30%;bottom:-220px;background:#0f8f84;opacity:.22;animation:drift3 38s ease-in-out infinite}
+.bgfx::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 0%,rgba(7,8,12,.55) 70%,rgba(7,8,12,.9) 100%)}
+@keyframes drift1{50%{transform:translate(160px,120px) scale(1.15)}}
+@keyframes drift2{50%{transform:translate(-180px,140px) scale(.9)}}
+@keyframes drift3{50%{transform:translate(-120px,-120px) scale(1.2)}}
+body.busy .bgfx i{animation-duration:9s,11s,13s}
+
+.app{position:relative;z-index:1;height:100vh;display:flex;flex-direction:column}
+
+/* ---------- верхняя навигация ---------- */
+.nav{display:flex;align-items:center;gap:6px;padding:12px 22px;border-bottom:1px solid var(--line);background:rgba(7,8,12,.45);backdrop-filter:blur(16px)}
+.logo{display:flex;align-items:center;gap:10px;margin-right:18px;font-weight:650;letter-spacing:.2px}
+.orb{width:26px;height:26px;border-radius:50%;flex:none;position:relative;
+  background:radial-gradient(circle at 34% 28%,#d6efff 0%,#4fb3ff 24%,#3b6bff 50%,#6a3cff 74%,#1a0f3d 100%);
+  box-shadow:0 0 16px rgba(79,179,255,.45);animation:breath 4s ease-in-out infinite}
+body.busy .orb{animation:breath 1.1s ease-in-out infinite,hue 3s linear infinite}
+@keyframes breath{50%{box-shadow:0 0 26px rgba(139,92,255,.75);transform:scale(1.04)}}
+@keyframes hue{to{filter:hue-rotate(360deg)}}
+.tabs{display:flex;gap:2px;flex:1}
+.tab{display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:10px;color:var(--muted);font-size:14px;position:relative;transition:color .2s,background .2s}
+.tab svg{width:17px;height:17px}
+.tab:hover{color:#dfe5f2;background:rgba(255,255,255,.04)}
+.tab.on{color:#fff}
+.tab.on::after{content:"";position:absolute;left:14px;right:14px;bottom:-13px;height:2px;border-radius:2px;background:var(--grad);box-shadow:0 0 12px rgba(79,179,255,.8)}
+.brainpill{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);background:var(--glass);border:1px solid var(--line);padding:6px 12px;border-radius:999px;max-width:340px;transition:.3s}
+.brainpill i{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok);flex:none}
+.brainpill span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brainpill.super{color:#e6dcff;border-color:rgba(139,92,255,.5);background:linear-gradient(135deg,rgba(79,179,255,.14),rgba(139,92,255,.24));box-shadow:0 0 22px rgba(139,92,255,.3)}
+.brainpill.super i{background:#b48bff;box-shadow:0 0 10px #b48bff;animation:blink 1s ease-in-out infinite}
+
+.views{flex:1;min-height:0;position:relative}
+.view{position:absolute;inset:0;display:none;animation:fadein .35s ease}
+.view.on{display:flex}
+@keyframes fadein{from{opacity:0;transform:translateY(6px)}}
+
+/* ---------- главная ---------- */
+#home{flex-direction:column;align-items:center;overflow:auto;padding:7vh 24px 160px}
+.hero{text-align:center}
+.hero h1{position:relative;display:inline-block;margin:0;font-size:76px;line-height:1;font-weight:760;letter-spacing:-2px;
+  background:linear-gradient(180deg,#ffffff 0%,#c9d6f2 60%,#8ea3d6 100%);-webkit-background-clip:text;color:transparent}
+.spark{position:absolute;right:-30px;top:-14px;width:30px;height:30px;animation:twinkle 3.2s ease-in-out infinite}
+@keyframes twinkle{0%,100%{transform:scale(.8) rotate(0);opacity:.7}50%{transform:scale(1.1) rotate(25deg);opacity:1}}
+.hero p{margin:10px 0 22px;color:#b8c0d3;font-size:17px}
+.herobtns{display:flex;gap:12px;justify-content:center}
+.gbtn{display:flex;align-items:center;gap:9px;padding:11px 20px;border-radius:14px;background:var(--glass);border:1px solid var(--line2);font-weight:600;
+  backdrop-filter:blur(10px);transition:transform .15s,border-color .2s,background .2s}
+.gbtn svg{width:18px;height:18px}
+.gbtn:hover{transform:translateY(-2px);border-color:rgba(79,179,255,.45);background:var(--glass2)}
+.gbtn.pri{background:var(--grad);border:0;box-shadow:0 8px 28px rgba(79,179,255,.3)}
+.clock{margin-top:18px;color:var(--muted);font-size:14px}.clock b{color:#fff;font-size:15px;margin-right:6px}
+.cards{width:min(980px,100%);margin-top:34px;display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.card{background:var(--glass);border:1px solid var(--line);border-radius:18px;padding:16px 18px;backdrop-filter:blur(14px);min-height:150px;transition:border-color .2s,transform .2s}
+.card:hover{border-color:var(--line2);transform:translateY(-2px)}
+.card h4{margin:0 0 10px;font-size:13px;color:var(--muted);font-weight:600;display:flex;justify-content:space-between;text-transform:uppercase;letter-spacing:.07em}
+.card h4 a{cursor:pointer;color:var(--acc);text-transform:none;letter-spacing:0}
+.li{display:flex;align-items:center;gap:9px;padding:7px 8px;margin:0 -8px;border-radius:9px;font-size:14px;color:#d3d9e6;cursor:pointer}
+.li:hover{background:rgba(255,255,255,.05)}.li span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.li small{color:var(--dim);font-size:12px}
+.empty-note{color:var(--dim);font-size:13.5px}
+.suggest{width:min(980px,100%);margin-top:14px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.sg{padding:12px 14px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid var(--line);font-size:13px;color:#c2c9d8;text-align:left;transition:.2s}
+.sg b{display:block;color:#fff;font-size:13.5px;margin-bottom:2px}
+.sg:hover{border-color:rgba(139,92,255,.45);background:rgba(139,92,255,.08);transform:translateY(-2px)}
+
+/* ---------- чат ---------- */
+#chat{flex-direction:row}
+.side{width:260px;flex:none;border-right:1px solid var(--line);display:flex;flex-direction:column;background:rgba(7,8,12,.35);backdrop-filter:blur(12px)}
+.newbtn{margin:14px;padding:10px 14px;border-radius:12px;background:var(--grad);font-weight:600;display:flex;align-items:center;gap:9px;box-shadow:0 6px 20px rgba(79,179,255,.25);transition:filter .15s,transform .15s}
 .newbtn:hover{filter:brightness(1.1);transform:translateY(-1px)}
-.chats{flex:1;overflow:auto;padding:4px 8px}
-.chats h6{margin:12px 10px 6px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em}
-.chat{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:10px;color:#c6ccd8;cursor:pointer;font-size:14px}
-.chat:hover{background:var(--panel)}.chat.on{background:var(--panel2);color:#fff}
+.chats{flex:1;overflow:auto;padding:0 8px 10px}
+.chat{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:10px;color:#c6ccd8;cursor:pointer;font-size:14px;transition:background .15s}
+.chat:hover{background:rgba(255,255,255,.05)}.chat.on{background:rgba(79,179,255,.12);color:#fff}
 .chat span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.chat .del{opacity:0;color:var(--dim);padding:2px 6px;border-radius:6px}.chat:hover .del{opacity:1}.chat .del:hover{color:var(--bad);background:#2a1a20}
-.sidefoot{border-top:1px solid var(--line);padding:10px}
-.sbtn{width:100%;display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;color:#c6ccd8;font-size:14px}
-.sbtn:hover{background:var(--panel)}
+.chat .del{opacity:0;color:var(--dim);padding:0 6px;border-radius:6px}.chat:hover .del{opacity:1}.chat .del:hover{color:var(--bad)}
+.main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+.chathead{display:flex;align-items:center;gap:12px;padding:12px 26px;border-bottom:1px solid var(--line)}
+.chathead h2{margin:0;font-size:15px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.seg{display:flex;background:var(--glass);border:1px solid var(--line);border-radius:11px;padding:3px}
+.seg button{padding:5px 12px;border-radius:8px;font-size:13px;color:var(--muted);transition:.15s}
+.seg button.on{background:rgba(255,255,255,.08);color:#fff}
+.scroll{flex:1;overflow:auto}
+.thread{max-width:880px;margin:0 auto;padding:26px 30px 230px}
 
-/* ---------- основная часть ---------- */
-.main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
-.top{display:flex;align-items:center;gap:14px;padding:14px 24px;border-bottom:1px solid var(--line);background:rgba(11,13,18,.8);backdrop-filter:blur(10px)}
-.top h1{font-size:15px;font-weight:600;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.badge{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);background:var(--panel);border:1px solid var(--line);padding:6px 11px;border-radius:999px;max-width:380px}
-.badge i{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none;box-shadow:0 0 8px var(--ok)}
-.badge span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.seg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:3px}
-.seg button{padding:6px 13px;border-radius:8px;font-size:13px;color:var(--muted)}
-.seg button.on{background:var(--panel2);color:#fff;box-shadow:0 1px 0 rgba(255,255,255,.04) inset}
-
-.scroll{flex:1;overflow:auto;scroll-behavior:smooth}
-.thread{max-width:860px;margin:0 auto;padding:28px 28px 220px}
-
-.empty{max-width:720px;margin:9vh auto 0;text-align:center;padding:0 24px}
-.empty .orb{width:84px;height:84px;margin:0 auto 22px}
-.empty h2{font-size:30px;margin:0 0 8px;font-weight:650;background:linear-gradient(90deg,#fff,#a9c8ff);-webkit-background-clip:text;color:transparent}
-.empty p{color:var(--muted);margin:0 0 28px}
-.chips{display:grid;grid-template-columns:1fr 1fr;gap:10px;text-align:left}
-.chipbtn{padding:14px 16px;border-radius:14px;background:var(--panel);border:1px solid var(--line);color:#cfd5e2;font-size:14px;transition:.15s}
-.chipbtn:hover{border-color:#34507a;background:#151b27;transform:translateY(-1px)}
-.chipbtn b{display:block;color:#fff;font-size:14px;margin-bottom:2px}
-
-.msg-user{display:flex;justify-content:flex-end;margin:22px 0}
-.msg-user div{max-width:78%;background:linear-gradient(135deg,#1f4f86,#3a2f86);padding:11px 16px;border-radius:18px 18px 4px 18px;white-space:pre-wrap;word-wrap:break-word;box-shadow:0 6px 18px rgba(0,0,0,.25)}
-.turn{display:flex;gap:14px;margin:18px 0}
-.turn>.orb{width:28px;height:28px;margin-top:2px}
+.msg-user{display:flex;justify-content:flex-end;margin:22px 0;animation:up .3s ease}
+.msg-user div{max-width:78%;background:linear-gradient(135deg,#3b6fe0,#7a4fe6);padding:11px 16px;border-radius:18px 18px 5px 18px;white-space:pre-wrap;word-wrap:break-word;box-shadow:0 8px 24px rgba(59,111,224,.25)}
+@keyframes up{from{opacity:0;transform:translateY(8px)}}
+.turn{display:flex;gap:14px;margin:18px 0;animation:up .3s ease}
+.turn>.orb{margin-top:3px}
 .turn .col{flex:1;min-width:0}
 
 .md{word-wrap:break-word}
 .md p{margin:0 0 10px}.md p:last-child{margin-bottom:0}
 .md h1,.md h2,.md h3{margin:16px 0 8px;line-height:1.3}.md h1{font-size:21px}.md h2{font-size:18px}.md h3{font-size:16px}
 .md ul,.md ol{margin:4px 0 10px;padding-left:22px}.md li{margin:3px 0}
-.md a{color:#6fb9ff;text-decoration:none;cursor:pointer}.md a:hover{text-decoration:underline}
-.md code{font-family:var(--mono);font-size:13px;background:#1b2130;border:1px solid var(--line);padding:1px 6px;border-radius:6px}
-.md table{border-collapse:collapse;margin:8px 0 12px;font-size:14px}.md th,.md td{border:1px solid var(--line2);padding:6px 10px}.md th{background:var(--panel)}
+.md a{color:#7cc4ff;text-decoration:none;cursor:pointer}.md a:hover{text-decoration:underline}
+.md code{font-family:var(--mono);font-size:13px;background:rgba(255,255,255,.06);border:1px solid var(--line);padding:1px 6px;border-radius:6px}
+.md table{border-collapse:collapse;margin:8px 0 12px;font-size:14px}.md th,.md td{border:1px solid var(--line2);padding:6px 10px}.md th{background:rgba(255,255,255,.04)}
 .md blockquote{margin:8px 0;padding:4px 14px;border-left:3px solid var(--acc2);color:#c3c9d6}
-.code{margin:10px 0 14px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#0d1017}
-.code .bar{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;background:#141925;color:var(--muted);font-size:12px}
-.code .bar button{font-size:12px;color:var(--muted);padding:2px 8px;border-radius:6px}.code .bar button:hover{background:#1e2533;color:#fff}
+.code{margin:10px 0 14px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:rgba(5,6,10,.75)}
+.code .bar{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;background:rgba(255,255,255,.04);color:var(--muted);font-size:12px}
+.code .bar button{font-size:12px;color:var(--muted);padding:2px 8px;border-radius:6px}.code .bar button:hover{background:rgba(255,255,255,.08);color:#fff}
 .code pre{margin:0;padding:12px 14px;overflow:auto;font:13px/1.55 var(--mono);color:#d6deeb}
-.cursor::after{content:"";display:inline-block;width:8px;height:16px;background:var(--acc);margin-left:2px;vertical-align:-3px;border-radius:2px;animation:blink 1s steps(2) infinite}
+.typing::after{content:"";display:inline-block;width:8px;height:17px;background:var(--acc);margin-left:3px;vertical-align:-3px;border-radius:2px;animation:blink 1s steps(2) infinite;box-shadow:0 0 8px var(--acc)}
 @keyframes blink{50%{opacity:0}}
 
-.prog{color:var(--muted);font-size:13px;font-style:italic;border-left:2px solid #2b3550;padding:2px 0 2px 12px;margin:6px 0 10px;white-space:pre-wrap;max-height:120px;overflow:auto}
-.switch{display:inline-flex;align-items:center;gap:8px;margin:6px 0 10px;padding:6px 12px;border-radius:999px;font-size:12.5px;color:#d9c8ff;
-  background:linear-gradient(135deg,rgba(42,156,255,.14),rgba(123,92,255,.18));border:1px solid rgba(123,92,255,.35)}
-.tool{margin:8px 0;border:1px solid var(--line);background:var(--panel);border-radius:12px;overflow:hidden;transition:border-color .2s}
-.tool .head{display:flex;align-items:center;gap:10px;padding:9px 13px;cursor:pointer;font-size:13.5px;color:#cdd3df}
-.tool .head .ic{width:20px;height:20px;display:grid;place-items:center;flex:none}
+/* блок «думает» — разворачивается стрелочкой */
+.think{margin:4px 0 10px;border-radius:12px;border:1px solid transparent;transition:border-color .2s,background .2s}
+.think.open{border-color:var(--line);background:rgba(255,255,255,.025)}
+.think .th{display:inline-flex;align-items:center;gap:8px;padding:5px 10px;border-radius:10px;cursor:pointer;font-size:13.5px;color:var(--muted)}
+.think .th:hover{color:#dfe5f2;background:rgba(255,255,255,.04)}
+.think .chev{transition:transform .2s;display:flex}.think.open .chev{transform:rotate(90deg)}
+.think .tb{display:none;padding:2px 14px 12px 32px;font-size:13px;line-height:1.55;color:#9aa3b8;white-space:pre-wrap;max-height:260px;overflow:auto;font-style:italic}
+.think.open .tb{display:block}
+.shine{background:linear-gradient(90deg,#8d95a9 0%,#ffffff 45%,#8d95a9 90%);background-size:200% 100%;-webkit-background-clip:text;color:transparent;animation:shine 1.6s linear infinite}
+@keyframes shine{from{background-position:120% 0}to{background-position:-80% 0}}
+.dots::after{content:"";animation:dots 1.2s steps(4) infinite}
+@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+
+/* шаги агента */
+.tool{margin:7px 0;border:1px solid var(--line);background:var(--glass);border-radius:12px;overflow:hidden;transition:border-color .25s;animation:up .25s ease;backdrop-filter:blur(10px)}
+.tool .head{display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;font-size:13.5px;color:#cfd5e1}
+.tool .ic{width:22px;height:22px;display:grid;place-items:center;flex:none;border-radius:7px;background:rgba(255,255,255,.05)}
+.tool .ic svg{width:14px;height:14px}
 .tool .head span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tool .head .ch{color:var(--dim);transition:transform .2s}.tool.open .head .ch{transform:rotate(90deg)}
+.tool .st{display:flex;align-items:center}
+.tool .chev{color:var(--dim);transition:transform .2s;display:flex}.tool.open .chev{transform:rotate(90deg)}
 .tool .body{display:none;border-top:1px solid var(--line);padding:10px 13px;font:12.5px/1.5 var(--mono);color:#aeb6c6;white-space:pre-wrap;max-height:320px;overflow:auto}
 .tool.open .body{display:block}
-.tool.run{border-color:#2b4e7c}.tool.fail .head{color:#ffb3ba}
-.spin{width:15px;height:15px;border:2px solid #2d4466;border-top-color:var(--acc);border-radius:50%;animation:rot .8s linear infinite}
+.tool.run{border-color:rgba(79,179,255,.35);box-shadow:0 0 0 1px rgba(79,179,255,.08),0 0 24px rgba(79,179,255,.08)}
+.tool.run .head span{color:#fff}
+.tool.fail{border-color:rgba(255,93,108,.25)}
+.spin{width:15px;height:15px;border:2px solid rgba(79,179,255,.25);border-top-color:var(--acc);border-radius:50%;animation:rot .8s linear infinite}
 @keyframes rot{to{transform:rotate(360deg)}}
-.tool img{display:block;max-width:100%;border-top:1px solid var(--line);cursor:zoom-in}
-.tool .file{display:inline-block;margin:0 13px 10px;font-size:12.5px;color:#6fb9ff;cursor:pointer}
-.err{margin:10px 0;padding:10px 14px;border-radius:12px;background:#2a161b;border:1px solid #4a2029;color:#ffc2c8;font-size:14px}
+.tool img{display:block;max-width:100%;border-top:1px solid var(--line);cursor:zoom-in;animation:reveal .6s ease}
+@keyframes reveal{from{opacity:0;filter:blur(14px)}}
+.painting{height:260px;border-top:1px solid var(--line);position:relative;overflow:hidden;
+  background:linear-gradient(110deg,#121626 8%,#1f2742 18%,#2a2050 33%,#121626 45%);background-size:200% 100%;animation:paint 1.4s linear infinite}
+.painting::after{content:"Рисую…";position:absolute;inset:0;display:grid;place-items:center;color:#c8b9ff;font-size:14px;letter-spacing:.1em}
+@keyframes paint{to{background-position:-200% 0}}
+.tool .file{display:inline-block;margin:0 13px 10px;font-size:12.5px;color:#7cc4ff;cursor:pointer}
+.err{margin:10px 0;padding:10px 14px;border-radius:12px;background:rgba(255,93,108,.08);border:1px solid rgba(255,93,108,.3);color:#ffc2c8;font-size:14px}
+.switch{display:inline-flex;align-items:center;gap:8px;margin:4px 0 10px;padding:6px 13px;border-radius:999px;font-size:12.5px;color:#e2d6ff;
+  background:linear-gradient(135deg,rgba(79,179,255,.14),rgba(139,92,255,.24));border:1px solid rgba(139,92,255,.4);animation:up .3s ease}
+.switch.load::after{content:"";width:12px;height:12px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:rot .8s linear infinite}
 
-/* ---------- план ---------- */
-.plan{position:absolute;right:max(24px,calc((100% - 860px)/2 + 28px));bottom:150px;width:330px;background:rgba(20,24,34,.92);
-  border:1px solid var(--line2);border-radius:16px;backdrop-filter:blur(14px);box-shadow:0 16px 40px rgba(0,0,0,.45);display:none;z-index:5}
+/* живая строка «что делает сейчас» */
+.live{display:none;align-items:center;gap:10px;margin:6px 0;font-size:14px}
+.live.show{display:flex}
+.live .lic{width:26px;height:26px;border-radius:9px;display:grid;place-items:center;background:rgba(79,179,255,.12)}
+.live .lic svg{width:15px;height:15px;color:var(--acc)}
+.live.k-think .lic{background:rgba(139,92,255,.15)}.live.k-think .lic svg{color:#b48bff;animation:pulse 1.2s ease-in-out infinite}
+.live.k-exec .lic svg{animation:rot 1.4s linear infinite}
+.live.k-draw .lic{background:rgba(46,230,197,.13)}.live.k-draw .lic svg{color:var(--acc3)}
+@keyframes pulse{50%{transform:scale(1.25);opacity:.6}}
+
+/* план */
+.plan{position:absolute;right:max(24px,calc((100% - 880px)/2 + 30px));bottom:160px;width:330px;background:rgba(16,19,28,.88);
+  border:1px solid var(--line2);border-radius:16px;backdrop-filter:blur(18px);box-shadow:0 16px 40px rgba(0,0,0,.45);display:none;z-index:5;animation:up .3s ease}
 .plan.show{display:block}
 .plan .ph{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;font-size:13px;font-weight:600;cursor:pointer}
 .plan .ph small{color:var(--muted);font-weight:500}
+.plan .bar{height:3px;margin:0 14px 8px;border-radius:3px;background:rgba(255,255,255,.07);overflow:hidden}
+.plan .bar i{display:block;height:100%;background:var(--grad);transition:width .5s ease}
 .plan ul{list-style:none;margin:0;padding:0 14px 12px;max-height:260px;overflow:auto}
-.plan.min ul{display:none}
-.plan li{display:flex;gap:10px;align-items:flex-start;padding:5px 0;font-size:13.5px;color:#c9cfdb}
-.plan li .b{width:17px;height:17px;border-radius:50%;border:2px solid #3a4459;flex:none;margin-top:2px;display:grid;place-items:center}
+.plan.min ul,.plan.min .bar{display:none}
+.plan li{display:flex;gap:10px;align-items:flex-start;padding:5px 0;font-size:13.5px;color:#c9cfdb;transition:color .3s}
+.plan li .b{width:17px;height:17px;border-radius:50%;border:2px solid #3a4459;flex:none;margin-top:2px;display:grid;place-items:center;transition:.3s}
 .plan li.done{color:var(--dim);text-decoration:line-through}.plan li.done .b{background:var(--ok);border-color:var(--ok)}
-.plan li.done .b::after{content:"";width:6px;height:3px;border-left:2px solid #0b0d12;border-bottom:2px solid #0b0d12;transform:rotate(-45deg) translate(1px,-1px)}
+.plan li.done .b::after{content:"";width:6px;height:3px;border-left:2px solid #07080c;border-bottom:2px solid #07080c;transform:rotate(-45deg) translate(1px,-1px)}
 .plan li.in_progress{color:#fff}.plan li.in_progress .b{border-color:var(--acc);border-top-color:transparent;animation:rot .9s linear infinite}
 
-/* ---------- поле ввода ---------- */
-.composer{position:absolute;left:0;right:0;bottom:0;padding:18px 28px 22px;background:linear-gradient(180deg,rgba(11,13,18,0) 0%,var(--bg) 35%)}
-.box{max-width:804px;margin:0 auto;background:var(--panel);border:1px solid var(--line2);border-radius:18px;padding:10px 10px 10px 16px;display:flex;gap:10px;align-items:flex-end;
-  box-shadow:0 10px 40px rgba(0,0,0,.35);transition:border-color .2s,box-shadow .2s}
-.box:focus-within{border-color:#35588a;box-shadow:0 10px 40px rgba(0,0,0,.35),0 0 0 4px rgba(42,156,255,.08)}
-textarea{flex:1;resize:none;border:0;outline:0;background:transparent;color:var(--text);font:inherit;max-height:220px;min-height:26px;padding:6px 0}
+/* поле ввода */
+.composer{position:absolute;left:0;right:0;bottom:0;padding:18px 30px 20px;background:linear-gradient(180deg,rgba(7,8,12,0) 0%,rgba(7,8,12,.92) 40%)}
+.box{max-width:820px;margin:0 auto;background:rgba(18,21,30,.85);border:1px solid var(--line2);border-radius:20px;padding:10px 10px 10px 18px;display:flex;gap:10px;align-items:flex-end;
+  box-shadow:0 12px 40px rgba(0,0,0,.4);backdrop-filter:blur(16px);transition:border-color .2s,box-shadow .2s}
+.box:focus-within{border-color:rgba(79,179,255,.5);box-shadow:0 12px 40px rgba(0,0,0,.4),0 0 0 4px rgba(79,179,255,.08)}
+textarea{flex:1;resize:none;border:0;outline:0;background:transparent;color:var(--text);font:inherit;max-height:40vh;min-height:26px;padding:7px 0;overflow-y:auto}
 textarea::placeholder{color:var(--dim)}
-.send{width:40px;height:40px;border-radius:12px;background:var(--grad);display:grid;place-items:center;flex:none;transition:.15s}
-.send:disabled{opacity:.35;cursor:default}.send.stop{background:#3a2228}
-.hint{max-width:804px;margin:8px auto 0;color:var(--dim);font-size:12px;text-align:center}
+.send{width:42px;height:42px;border-radius:13px;background:var(--grad);display:grid;place-items:center;flex:none;transition:transform .15s,opacity .15s,background .2s;box-shadow:0 4px 16px rgba(79,179,255,.3)}
+.send:hover:not(:disabled){transform:scale(1.06)}
+.send:disabled{opacity:.3;cursor:default;box-shadow:none}.send.stop{background:linear-gradient(135deg,#ff5d6c,#d63a6e)}
+.hint{max-width:820px;margin:8px auto 0;color:var(--dim);font-size:12px;text-align:center}
+.hint kbd{font:11px var(--mono);background:rgba(255,255,255,.06);border:1px solid var(--line2);border-radius:5px;padding:1px 5px;color:#b9c1d3}
 
-/* ---------- окна ---------- */
-.modal{position:fixed;inset:0;background:rgba(5,7,10,.6);backdrop-filter:blur(4px);display:none;place-items:center;z-index:20}
-.modal.show{display:grid}
-.card{width:min(560px,92vw);background:var(--panel);border:1px solid var(--line2);border-radius:18px;padding:22px;box-shadow:0 30px 80px rgba(0,0,0,.5)}
-.card h3{margin:0 0 12px;font-size:17px}
-.card pre{white-space:pre-wrap;word-wrap:break-word;font:13px/1.5 var(--mono);background:#0d1017;border:1px solid var(--line);padding:12px;border-radius:10px;max-height:300px;overflow:auto;margin:0 0 16px}
-.row{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
-.btn{padding:9px 16px;border-radius:10px;background:var(--panel2);border:1px solid var(--line2);font-size:14px}
-.btn:hover{border-color:#3b4760}.btn.pri{background:var(--grad);border:0;font-weight:600}
-.field{margin:0 0 14px}.field label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
-.field input,.field select{width:100%;background:#0d1017;border:1px solid var(--line2);color:var(--text);border-radius:10px;padding:9px 11px;font:inherit;outline:0}
-.field input:focus,.field select:focus{border-color:#35588a}
+/* ---------- страницы: мозги, коннекторы, память, настройки ---------- */
+.page{flex-direction:column;align-items:center;overflow:auto;padding:34px 24px 60px}
+.page h2{margin:0 0 6px;font-size:26px}.page .sub{color:var(--muted);margin:0 0 24px}
+.grid{width:min(980px,100%);display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.grid.two{grid-template-columns:repeat(2,1fr)}
+.bc{background:var(--glass);border:1px solid var(--line);border-radius:18px;padding:18px;backdrop-filter:blur(14px);position:relative;overflow:hidden}
+.bc.hot{border-color:rgba(139,92,255,.45);box-shadow:0 0 30px rgba(139,92,255,.15)}
+.bc .tag{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.bc h3{margin:6px 0 4px;font-size:17px}.bc p{margin:0;color:#aab2c4;font-size:13.5px}
+.bc .model{margin-top:12px;font:12.5px var(--mono);color:#d6deeb;background:rgba(0,0,0,.25);border:1px solid var(--line);padding:6px 9px;border-radius:8px;word-break:break-all}
+.bc .state{margin-top:10px;font-size:12.5px;display:flex;align-items:center;gap:7px;color:var(--muted)}
+.bc .state i{width:7px;height:7px;border-radius:50%;background:#4a5266}.bc .state.on i{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.toggle{position:absolute;right:16px;top:18px;width:42px;height:24px;border-radius:24px;background:#2a3142;transition:.25s;cursor:pointer}
+.toggle::after{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.25s}
+.toggle.on{background:var(--grad)}.toggle.on::after{left:21px}
+.memlist{width:min(760px,100%)}
+.mem{display:flex;gap:10px;align-items:center;padding:10px 14px;margin-bottom:8px;border-radius:12px;background:var(--glass);border:1px solid var(--line)}
+.mem span{flex:1}.mem button{color:var(--dim);padding:2px 8px;border-radius:6px}.mem button:hover{color:var(--bad);background:rgba(255,93,108,.1)}
+.form{width:min(640px,100%)}
+.field{margin:0 0 15px}.field label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+.field input,.field select{width:100%;background:rgba(0,0,0,.3);border:1px solid var(--line2);color:var(--text);border-radius:11px;padding:10px 12px;font:inherit;outline:0}
+.field input:focus,.field select:focus{border-color:rgba(79,179,255,.5)}
 .field small{display:block;color:var(--dim);font-size:12px;margin-top:5px}
 .check{display:flex;gap:10px;align-items:center;font-size:14px;margin:0 0 12px;cursor:pointer}
-.note{font-size:13px;padding:10px 12px;border-radius:10px;background:#2a2414;border:1px solid #4d3f1b;color:#ffd99a;margin:0 0 14px}
-.zoom{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;place-items:center;z-index:30;cursor:zoom-out}
-.zoom.show{display:grid}.zoom img{max-width:94vw;max-height:94vh;border-radius:10px}
+.note{font-size:13px;padding:10px 12px;border-radius:10px;background:rgba(255,181,71,.08);border:1px solid rgba(255,181,71,.3);color:#ffd99a;margin:0 0 14px}
+.btn{padding:10px 16px;border-radius:11px;background:rgba(255,255,255,.06);border:1px solid var(--line2);font-size:14px;transition:.15s}
+.btn:hover{border-color:rgba(255,255,255,.25)}.btn.pri{background:var(--grad);border:0;font-weight:600}
+.saved{color:var(--ok);font-size:13px;margin-left:12px;opacity:0;transition:opacity .3s}.saved.show{opacity:1}
+
+/* ---------- окно разрешения ---------- */
+.modal{position:fixed;inset:0;background:rgba(3,4,8,.62);backdrop-filter:blur(6px);display:none;place-items:center;z-index:20}
+.modal.show{display:grid;animation:fadein .2s ease}
+.perm{width:min(580px,92vw);background:linear-gradient(180deg,rgba(26,30,44,.96),rgba(16,19,28,.96));border:1px solid var(--line2);border-radius:22px;padding:24px;
+  box-shadow:0 40px 100px rgba(0,0,0,.6),0 0 0 1px rgba(139,92,255,.15);animation:pop .25s cubic-bezier(.2,1.3,.5,1)}
+@keyframes pop{from{transform:scale(.94);opacity:0}}
+.perm .top{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+.perm .shield{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(255,181,71,.2),rgba(255,122,59,.25));border:1px solid rgba(255,181,71,.35)}
+.perm h3{margin:0;font-size:17px}.perm .tool-name{color:var(--muted);font-size:13px}
+.perm .why{margin:0 0 12px;padding:10px 14px;border-left:3px solid var(--acc2);background:rgba(139,92,255,.07);border-radius:0 10px 10px 0;color:#d9d0f5;font-size:14px}
+.perm pre{white-space:pre-wrap;word-wrap:break-word;font:13px/1.5 var(--mono);background:rgba(0,0,0,.35);border:1px solid var(--line);padding:12px;border-radius:12px;max-height:260px;overflow:auto;margin:0 0 18px}
+.perm .acts{display:grid;gap:8px}
+.perm .acts button{text-align:left;padding:11px 14px;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid var(--line2);font-size:14px;display:flex;justify-content:space-between;align-items:center;transition:.15s}
+.perm .acts button:hover{border-color:rgba(79,179,255,.45);background:rgba(79,179,255,.08)}
+.perm .acts button.pri{background:var(--grad);border:0;font-weight:600}
+.perm .acts button.no{color:#ffb3ba}.perm .acts button.no:hover{border-color:rgba(255,93,108,.5);background:rgba(255,93,108,.08)}
+.perm .acts kbd{font:11px var(--mono);opacity:.7}
+.zoom{position:fixed;inset:0;background:rgba(0,0,0,.88);display:none;place-items:center;z-index:30;cursor:zoom-out}
+.zoom.show{display:grid}.zoom img{max-width:94vw;max-height:94vh;border-radius:12px;animation:pop .25s ease}
 </style>
 </head>
 <body>
+<div class="bgfx"><i></i><i></i><i></i></div>
 <div class="app">
-  <aside class="side">
-    <div class="brand"><div class="orb" id="brandOrb"></div><div><b>Мартышка</b><small>Студия · агент</small></div></div>
-    <button class="newbtn" id="newChat"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Новый чат</button>
-    <div class="chats" id="chats"></div>
-    <div class="sidefoot">
-      <button class="sbtn" id="openWs"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Папка проектов</button>
-      <button class="sbtn" id="openSettings"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Настройки</button>
+  <nav class="nav">
+    <div class="logo"><div class="orb"></div>Мартышка</div>
+    <div class="tabs" id="tabs">
+      <button class="tab on" data-v="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Главная</button>
+      <button class="tab" data-v="chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Чат</button>
+      <button class="tab" data-v="brains"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4"/></svg>Мозги</button>
+      <button class="tab" data-v="connectors"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5M3 17l9 5 9-5"/></svg>Коннекторы</button>
+      <button class="tab" data-v="memory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0-6 6c0 2 1 3.5 2 4.5V17h8v-3.5c1-1 2-2.5 2-4.5a6 6 0 0 0-6-6zM9 21h6"/></svg>Память</button>
+      <button class="tab" data-v="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>Настройки</button>
     </div>
-  </aside>
+    <div class="brainpill" id="brainpill" title="Каким мозгом сейчас работает"><i></i><span id="brainText">…</span></div>
+  </nav>
 
-  <main class="main">
-    <div class="top">
-      <h1 id="title">Новый чат</h1>
-      <div class="badge" id="badge" title="Каким мозгом сейчас работает"><i></i><span id="badgeText">…</span></div>
-      <div class="seg" id="mode">
-        <button data-m="auto" class="on" title="Сама решает: болтовня — лёгкий мозг, программирование — супер-мозг">Авто</button>
-        <button data-m="chat" title="Просто поговорить (лёгкий мозг)">Чат</button>
-        <button data-m="task" title="Максимальное качество: супер-мозг + все инструменты">⚡ Агент</button>
+  <div class="views">
+    <!-- ГЛАВНАЯ -->
+    <section class="view on" id="home">
+      <div class="hero">
+        <h1>Мартышка<svg class="spark" viewBox="0 0 24 24"><path d="M12 0c.6 6.4 5.6 11.4 12 12-6.4.6-11.4 5.6-12 12-.6-6.4-5.6-11.4-12-12C6.4 11.4 11.4 6.4 12 0z" fill="url(#sg)"/><defs><linearGradient id="sg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#bfe6ff"/><stop offset="1" stop-color="#b48bff"/></linearGradient></defs></svg></h1>
+        <p>Твой ИИ-агент прямо на этом ПК</p>
+        <div class="herobtns">
+          <button class="gbtn pri" id="goChat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Чат</button>
+          <button class="gbtn" id="goVoice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg>Говорить</button>
+          <button class="gbtn" id="goWs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Проекты</button>
+        </div>
+        <div class="clock" id="clock"></div>
       </div>
-    </div>
-    <div class="scroll" id="scroll"><div class="thread" id="thread"></div></div>
-
-    <div class="plan" id="plan"><div class="ph" id="planHead"><span>План задачи</span><small id="planCount"></small></div><ul id="planList"></ul></div>
-
-    <div class="composer">
-      <div class="box">
-        <textarea id="input" rows="1" placeholder="Напиши задачу или просто поболтай…"></textarea>
-        <button class="send" id="send" disabled title="Отправить (Enter)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+      <div class="cards">
+        <div class="card"><h4>Недавние чаты <a id="allChats">все</a></h4><div id="recent"></div></div>
+        <div class="card"><h4>Мозги</h4><div id="homeBrains"></div></div>
+        <div class="card"><h4>Память <a id="allMem">открыть</a></h4><div id="homeMem"></div></div>
       </div>
-      <div class="hint">Enter — отправить · Shift+Enter — новая строка · опасные действия Мартышка сначала спросит</div>
-    </div>
-  </main>
+      <div class="suggest">
+        <button class="sg" data-q="Сделай игру «змейка» на HTML с красивым неоновым дизайном и открой её"><b>🎮 Сделай игру</b>Змейка с неоном</button>
+        <button class="sg" data-q="Найди в интернете свежие новости про видеокарты NVIDIA и расскажи коротко"><b>🌐 Найди новости</b>Про NVIDIA</button>
+        <button class="sg" data-q="Нарисуй кинематографичное фото ночного Токио под дождём, неон, 35мм"><b>🎨 Нарисуй</b>Токио под дождём</button>
+        <button class="sg" data-q="Открой настройки звука Windows и скажи, какое устройство вывода выбрано"><b>🖥 Управляй ПК</b>Настройки звука</button>
+      </div>
+    </section>
+
+    <!-- ЧАТ -->
+    <section class="view" id="chat">
+      <aside class="side">
+        <button class="newbtn" id="newChat"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Новый чат</button>
+        <div class="chats" id="chats"></div>
+      </aside>
+      <div class="main">
+        <div class="chathead">
+          <h2 id="title">Новый чат</h2>
+          <div class="seg" id="mode">
+            <button data-m="auto" class="on" title="Сама решает: болтовня — лёгкий мозг, программирование — супер-мозг">Авто</button>
+            <button data-m="chat" title="Просто поговорить (лёгкий мозг)">Чат</button>
+            <button data-m="task" title="Максимум: супер-мозг и все инструменты">⚡ Агент</button>
+          </div>
+        </div>
+        <div class="scroll" id="scroll"><div class="thread" id="thread"></div></div>
+        <div class="plan" id="plan"><div class="ph" id="planHead"><span>План задачи</span><small id="planCount"></small></div><div class="bar"><i id="planBar"></i></div><ul id="planList"></ul></div>
+        <div class="composer">
+          <div class="box">
+            <textarea id="input" rows="1" placeholder="Напиши задачу или просто поболтай…"></textarea>
+            <button class="send" id="send" disabled title="Отправить (Enter)"></button>
+          </div>
+          <div class="hint"><kbd>Enter</kbd> отправить · <kbd>Shift</kbd>+<kbd>Enter</kbd> новая строка · <kbd>Esc</kbd> остановить</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- МОЗГИ -->
+    <section class="view page" id="brains">
+      <h2>Мозги</h2><p class="sub">Мартышка сама выбирает мозг под задачу и выгружает тяжёлый, когда закончила.</p>
+      <div class="grid" id="brainCards"></div>
+    </section>
+
+    <!-- КОННЕКТОРЫ -->
+    <section class="view page" id="connectors">
+      <h2>Коннекторы</h2><p class="sub">Что агенту можно делать. Выключенное он просто не увидит.</p>
+      <div class="grid" id="connCards"></div>
+    </section>
+
+    <!-- ПАМЯТЬ -->
+    <section class="view page" id="memory">
+      <h2>Память</h2><p class="sub">Что Мартышка запомнила о тебе и твоём ПК. Лишнее — удали.</p>
+      <div class="memlist" id="memList"></div>
+    </section>
+
+    <!-- НАСТРОЙКИ -->
+    <section class="view page" id="settings">
+      <h2>Настройки</h2><p class="sub">Хранятся только на этом ПК (data/settings.json).</p>
+      <div class="form">
+        <div class="note" id="sdkNote" style="display:none">Облачный Claude не подключён (нет библиотеки <b>anthropic</b>). Мартышка работает на мозгах этого ПК.</div>
+        <div class="field"><label>Мозг для задач</label><select id="s_brain">
+          <option value="auto">Авто: облако, если настроено → иначе мозги на ПК</option><option value="local">Только на ПК</option>
+          <option value="claude">Только Claude (облако, платно)</option><option value="ollama_cloud">Только Ollama Cloud</option></select></div>
+        <div class="field"><label>Супер-мозг для программирования</label><input id="s_super" placeholder="qwen3.6:35b-a3b"></div>
+        <div class="field"><label>Мозг для простых дел</label><input id="s_local" placeholder="пусто = автоматически (gemma4)"></div>
+        <div class="field"><label>Ключ Claude API (необязательно)</label><input id="s_key" type="password" placeholder="sk-ant-…" autocomplete="off"></div>
+        <div class="field"><label>Модель Ollama Cloud (необязательно)</label><input id="s_ocloud" placeholder="например glm-5.3:cloud"></div>
+        <label class="check"><input type="checkbox" id="s_orb"> Крестик прячет окно в шарик (иначе закрывать совсем)</label>
+        <label class="check"><input type="checkbox" id="s_auto"> Команды в папке проектов выполнять без вопроса</label>
+        <button class="btn pri" id="sSave">Сохранить</button><span class="saved" id="savedNote">Сохранено ✓</span>
+      </div>
+    </section>
+  </div>
 </div>
 
-<div class="modal" id="confirm"><div class="card">
-  <h3>Мартышка спрашивает</h3><pre id="confirmText"></pre>
-  <div class="row"><button class="btn" data-a="no">Нет</button><button class="btn" data-a="always">Да, и больше не спрашивай в этой задаче</button><button class="btn pri" data-a="yes">Да</button></div>
+<div class="modal" id="confirm"><div class="perm">
+  <div class="top"><div class="shield"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffc14f" stroke-width="2"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M12 8v5M12 16h.01"/></svg></div>
+    <div><h3>Мартышке нужно разрешение</h3><div class="tool-name" id="cTool"></div></div></div>
+  <div class="why" id="cWhy"></div>
+  <pre id="cText"></pre>
+  <div class="acts">
+    <button class="pri" data-a="once">Разрешить один раз <kbd>Enter</kbd></button>
+    <button data-a="scope" id="cScope">Разрешить всё в этой папке</button>
+    <button data-a="task">Разрешить всё до конца этой задачи</button>
+    <button class="no" data-a="no">Запретить <kbd>Esc</kbd></button>
+  </div>
 </div></div>
-
-<div class="modal" id="settings"><div class="card">
-  <h3>Настройки студии</h3>
-  <div class="note" id="sdkNote" style="display:none">Для Claude нужна библиотека <b>anthropic</b> (≈ 2 МБ). Скажи Мартышке или ассистенту поставить её.</div>
-  <div class="field"><label>Мозг для задач</label><select id="s_brain">
-    <option value="auto">Авто: Claude → Ollama Cloud → на ПК</option><option value="claude">Только Claude (облако, платно)</option>
-    <option value="ollama_cloud">Только Ollama Cloud</option><option value="local">Только на ПК (бесплатно, слабее)</option></select></div>
-  <div class="field"><label>Ключ Claude API</label><input id="s_key" type="password" placeholder="sk-ant-…" autocomplete="off"><small>Берётся на console.anthropic.com. Хранится только на этом ПК (data/settings.json).</small></div>
-  <div class="field"><label>Модель Claude и глубина мысли</label><div style="display:flex;gap:8px">
-    <select id="s_cmodel"><option value="claude-opus-5-5">Opus 5.5 — лучший для кода</option><option value="claude-sonnet-5-5">Sonnet 5.5 — быстрее и в 2 раза дешевле</option></select>
-    <select id="s_effort" style="max-width:150px"><option value="medium">Средне</option><option value="high">Глубоко</option><option value="xhigh">Очень глубоко</option></select></div></div>
-  <div class="field"><label>Модель Ollama Cloud</label><input id="s_ocloud" placeholder="например glm-5.3:cloud (нужен ollama signin)"></div>
-  <div class="field"><label>Локальная модель для задач</label><input id="s_local" placeholder="пусто = автоматически (gemma4)"></div>
-  <label class="check"><input type="checkbox" id="s_auto"> Выполнять команды в папке проектов без вопроса</label>
-  <label class="check"><input type="checkbox" id="s_web"> Разрешить поиск в интернете</label>
-  <div class="row"><button class="btn" id="sCancel">Отмена</button><button class="btn pri" id="sSave">Сохранить</button></div>
-</div></div>
-
 <div class="zoom" id="zoom"><img id="zoomImg" alt=""></div>
 
 <script>
 const $ = s => document.querySelector(s);
-const state = {chatId:null, busy:false, mode:'auto', turn:null, seg:null, segText:'', prog:null, tools:{}, plan:[]};
-const ICONS = {
-  ok:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3ddc97" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg>',
-  bad:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ff5d6c" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
-  ch:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M9 6l6 6-6 6"/></svg>'};
+const api = () => window.pywebview.api;
+const st = {chatId:null, busy:false, mode:'auto', turn:null, seg:null, segText:'', think:null, thinkText:'', thinkT0:0, live:null, plan:[], data:null};
+const IC = {
+  ok:'<svg viewBox="0 0 24 24" fill="none" stroke="#3ddc97" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg>',
+  bad:'<svg viewBox="0 0 24 24" fill="none" stroke="#ff5d6c" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  chev:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M9 6l6 6-6 6"/></svg>',
+  send:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+  stop:'<svg width="15" height="15" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3" fill="#fff"/></svg>',
+  think:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0-6 6c0 2 1 3.5 2 4.5V17h8v-3.5c1-1 2-2.5 2-4.5a6 6 0 0 0-6-6zM9 21h6"/></svg>',
+  search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
+  read:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 5h7a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H2zM22 5h-7a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h8z"/></svg>',
+  write:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  exec:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>',
+  look:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  draw:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><path d="M12 2a10 10 0 0 0 0 20c1 0 1.5-.8 1.5-1.6 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.7-1.6 1.6-1.6H16a6 6 0 0 0 6-6c0-4.4-4.5-8.4-10-8.4z"/></svg>',
+  memory:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
+  plan:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>'};
 
 // ---------- markdown ----------
-const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 function inline(s){
-  s = esc(s);
-  const codes=[]; s = s.replace(/`([^`]+)`/g,(_,c)=>{codes.push(c);return `\u0000${codes.length-1}\u0000`});
+  s = esc(s); const codes=[];
+  s = s.replace(/`([^`]+)`/g,(_,c)=>{codes.push(c);return `\u0000${codes.length-1}\u0000`});
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,(_,t,u)=>`<a data-href="${u.replace(/"/g,'&quot;')}">${t}</a>`)
        .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<i>$2</i>')
        .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g,(_,p,u)=>`${p}<a data-href="${u}">${u}</a>`);
   return s.replace(/\u0000(\d+)\u0000/g,(_,i)=>`<code>${codes[i]}</code>`);
 }
 function md(src){
-  const out=[]; const lines=src.replace(/\r/g,'').split('\n'); let i=0;
-  while(i<lines.length){
-    let l=lines[i];
-    const f=l.match(/^\s*```(\S*)/);
-    if(f){ const buf=[]; i++; while(i<lines.length && !/^\s*```/.test(lines[i])) buf.push(lines[i++]); i++;
-      out.push(`<div class="code"><div class="bar"><span>${esc(f[1]||'код')}</span><button data-copy>Копировать</button></div><pre>${esc(buf.join('\n'))}</pre></div>`); continue; }
+  const out=[]; const L=src.replace(/\r/g,'').split('\n'); let i=0;
+  while(i<L.length){
+    const l=L[i]; const f=l.match(/^\s*```(\S*)/);
+    if(f){ const b=[]; i++; while(i<L.length && !/^\s*```/.test(L[i])) b.push(L[i++]); i++;
+      out.push(`<div class="code"><div class="bar"><span>${esc(f[1]||'код')}</span><button data-copy>Копировать</button></div><pre>${esc(b.join('\n'))}</pre></div>`); continue; }
     if(/^#{1,3}\s/.test(l)){ const n=l.match(/^#+/)[0].length; out.push(`<h${n}>${inline(l.replace(/^#+\s*/,''))}</h${n}>`); i++; continue; }
-    if(/^\s*\|.*\|\s*$/.test(l) && i+1<lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i+1])){
+    if(/^\s*\|.*\|\s*$/.test(l) && i+1<L.length && /^\s*\|[\s:|-]+\|\s*$/.test(L[i+1])){
       const cells=r=>r.trim().replace(/^\||\|$/g,'').split('|').map(c=>inline(c.trim()));
       let h=`<table><tr>${cells(l).map(c=>`<th>${c}</th>`).join('')}</tr>`; i+=2;
-      while(i<lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) h+=`<tr>${cells(lines[i++]).map(c=>`<td>${c}</td>`).join('')}</tr>`;
+      while(i<L.length && /^\s*\|.*\|\s*$/.test(L[i])) h+=`<tr>${cells(L[i++]).map(c=>`<td>${c}</td>`).join('')}</tr>`;
       out.push(h+'</table>'); continue; }
-    if(/^\s*([-*•]|\d+[.)])\s+/.test(l)){ const ord=/^\s*\d/.test(l); const items=[];
-      while(i<lines.length && /^\s*([-*•]|\d+[.)])\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*([-*•]|\d+[.)])\s+/,''));
-      out.push(`<${ord?'ol':'ul'}>${items.map(x=>`<li>${inline(x)}</li>`).join('')}</${ord?'ol':'ul'}>`); continue; }
-    if(/^>\s?/.test(l)){ const b=[]; while(i<lines.length && /^>\s?/.test(lines[i])) b.push(lines[i++].replace(/^>\s?/,'')); out.push(`<blockquote>${inline(b.join(' '))}</blockquote>`); continue; }
+    if(/^\s*([-*•]|\d+[.)])\s+/.test(l)){ const ord=/^\s*\d/.test(l); const it=[];
+      while(i<L.length && /^\s*([-*•]|\d+[.)])\s+/.test(L[i])) it.push(L[i++].replace(/^\s*([-*•]|\d+[.)])\s+/,''));
+      out.push(`<${ord?'ol':'ul'}>${it.map(x=>`<li>${inline(x)}</li>`).join('')}</${ord?'ol':'ul'}>`); continue; }
+    if(/^>\s?/.test(l)){ const b=[]; while(i<L.length && /^>\s?/.test(L[i])) b.push(L[i++].replace(/^>\s?/,'')); out.push(`<blockquote>${inline(b.join(' '))}</blockquote>`); continue; }
     if(!l.trim()){ i++; continue; }
-    const p=[]; while(i<lines.length && lines[i].trim() && !/^\s*(```|#{1,3}\s|[-*•]\s|\d+[.)]\s|>|\|)/.test(lines[i])) p.push(lines[i++]);
-    if(!p.length) p.push(lines[i++]);
+    const p=[]; while(i<L.length && L[i].trim() && !/^\s*(```|#{1,3}\s|[-*•]\s|\d+[.)]\s|>|\|)/.test(L[i])) p.push(L[i++]);
+    if(!p.length) p.push(L[i++]);
     out.push(`<p>${p.map(inline).join('<br>')}</p>`);
   }
   return out.join('');
 }
 
-// ---------- отрисовка ----------
-const thread=$('#thread'), scroller=$('#scroll');
-let stick=true;
-scroller.addEventListener('scroll',()=>{stick = scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight < 80});
-const down=()=>{ if(stick) scroller.scrollTop=scroller.scrollHeight };
+// ---------- вкладки ----------
+function show(v){ document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.v===v));
+  document.querySelectorAll('.view').forEach(x=>x.classList.toggle('on',x.id===v));
+  if(v==='brains') renderBrains(); if(v==='connectors') renderConnectors(); if(v==='memory') renderMemory(); if(v==='settings') loadSettings();
+  if(v==='chat') setTimeout(()=>input.focus(),50); }
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>show(t.dataset.v));
+$('#goChat').onclick=()=>show('chat'); $('#allChats').onclick=()=>show('chat'); $('#allMem').onclick=()=>show('memory');
+$('#goWs').onclick=()=>api().open_workspace();
+$('#goVoice').onclick=async()=>{ await api().start_voice(); $('#goVoice').lastChild.textContent='Голос запущен'; setTimeout(()=>$('#goVoice').lastChild.textContent='Говорить',4000); };
+function tick(){ const d=new Date(); $('#clock').innerHTML=`<b>${d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}</b>${d.toLocaleDateString('ru-RU',{weekday:'long',day:'numeric',month:'long'})}`; }
+tick(); setInterval(tick,10000);
 
-function showEmpty(){
-  thread.innerHTML=`<div class="empty"><div class="orb"></div><h2>Чем займёмся, брат?</h2>
-  <p>Пиши задачу — я сама составлю план, найду нужное в интернете, напишу и проверю код, нарисую картинку.</p>
-  <div class="chips">
-   <button class="chipbtn" data-q="Напиши игру «змейка» на HTML с красивым неоновым дизайном и открой её"><b>Сделай игру</b>Змейка с неоновым дизайном</button>
-   <button class="chipbtn" data-q="Найди в интернете последние новости про видеокарты NVIDIA и расскажи коротко"><b>Найди в интернете</b>Свежие новости про NVIDIA</button>
-   <button class="chipbtn" data-q="Нарисуй кинематографичное фото ночного Токио под дождём, неон, 35мм"><b>Нарисуй фото</b>Ночной Токио под дождём</button>
-   <button class="chipbtn" data-q="Напиши программу на Python, которая сортирует файлы в папке Загрузки по типам, и проверь её на тестовой папке"><b>Напиши программу</b>Сортировщик файлов на Python</button>
-  </div></div>`;
-}
-function addUser(text){ if(thread.querySelector('.empty')) thread.innerHTML='';
-  const d=document.createElement('div'); d.className='msg-user'; const b=document.createElement('div'); b.textContent=text; d.appendChild(b); thread.appendChild(d); }
+// ---------- чат: отрисовка ----------
+const thread=$('#thread'), scroller=$('#scroll'); let stick=true;
+scroller.addEventListener('scroll',()=>{stick=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<90});
+const down=()=>{ if(stick) scroller.scrollTop=scroller.scrollHeight };
+function emptyChat(){ thread.innerHTML=`<div style="text-align:center;margin-top:16vh;color:var(--muted)"><div class="orb" style="width:64px;height:64px;margin:0 auto 18px"></div><div style="font-size:22px;color:#fff;font-weight:650;margin-bottom:6px">Чем займёмся?</div>Пиши задачу — составлю план, найду, напишу и проверю код, порисую или поуправляю ПК.</div>`; }
+function addUser(t){ if(!thread.querySelector('.msg-user,.turn')) thread.innerHTML='';
+  const d=document.createElement('div'); d.className='msg-user'; const b=document.createElement('div'); b.textContent=t; d.appendChild(b); thread.appendChild(d); }
 function newTurn(){ const t=document.createElement('div'); t.className='turn'; t.innerHTML='<div class="orb"></div><div class="col"></div>';
-  thread.appendChild(t); state.turn=t.querySelector('.col'); state.seg=null; state.prog=null; return state.turn; }
-function ensureTurn(){ return state.turn || newTurn(); }
-function textSeg(){ if(!state.seg){ state.seg=document.createElement('div'); state.seg.className='md'; ensureTurn().appendChild(state.seg); state.segText=''; } return state.seg; }
-function closeSeg(){ if(state.seg){ state.seg.classList.remove('cursor'); state.seg.innerHTML=md(state.segText); } state.seg=null; state.prog=null; }
-function addText(t){ const s=textSeg(); state.segText+=t; s.innerHTML=md(state.segText); s.classList.add('cursor'); }
-function addProg(t){ if(!state.prog){ state.prog=document.createElement('div'); state.prog.className='prog'; ensureTurn().appendChild(state.prog); } state.prog.textContent+=t; }
-function toolEl(item, running){
-  const el=document.createElement('div'); el.className='tool'+(running?' run':'')+(item.ok===false&&!running?' fail':'');
-  el.innerHTML=`<div class="head"><div class="ic">${running?'<div class="spin"></div>':(item.ok?ICONS.ok:ICONS.bad)}</div><span></span><div class="ch">${ICONS.ch}</div></div><div class="body"></div>`;
-  el.querySelector('.head span').textContent=item.label; el.querySelector('.body').textContent=item.detail||'…';
+  thread.appendChild(t); st.turn=t.querySelector('.col'); st.seg=null; st.think=null;
+  st.live=document.createElement('div'); st.live.className='live'; st.live.innerHTML='<div class="lic"></div><span class="shine"></span>'; st.turn.appendChild(st.live); return st.turn; }
+const turnEl=()=>st.turn||newTurn();
+function place(el){ const t=turnEl(); if(st.live && st.live.parentNode===t) t.insertBefore(el,st.live); else t.appendChild(el); return el; }
+let raf=0;
+function renderSeg(){ raf=0; if(st.seg) st.seg.innerHTML=md(st.segText); down(); }
+function addText(t){ if(!st.seg){ st.seg=place(document.createElement('div')); st.seg.className='md typing'; st.segText=''; closeThink(); }
+  st.segText+=t; if(!raf) raf=requestAnimationFrame(renderSeg); setLive('write','Пишу ответ'); }
+function closeSeg(){ if(st.seg){ st.seg.classList.remove('typing'); st.seg.innerHTML=md(st.segText); } st.seg=null; }
+function addThink(t){
+  if(!st.think){ closeSeg(); st.think=place(document.createElement('div')); st.think.className='think'; st.thinkText=''; st.thinkT0=Date.now();
+    st.think.innerHTML=`<div class="th"><span class="chev">${IC.chev}</span><span class="tl shine">Думает</span></div><div class="tb"></div>`;
+    st.think.querySelector('.th').onclick=()=>st.think_toggle(st.think); }
+  st.thinkText+=t; const tb=st.think.querySelector('.tb'); tb.textContent=st.thinkText; tb.scrollTop=tb.scrollHeight; }
+st.think_toggle=el=>el.classList.toggle('open');
+function closeThink(){ if(!st.think) return; const s=Math.max(1,Math.round((Date.now()-st.thinkT0)/1000));
+  const tl=st.think.querySelector('.tl'); tl.classList.remove('shine'); tl.textContent=`Подумала · ${s} с`; const el=st.think; el.querySelector('.th').onclick=()=>el.classList.toggle('open'); st.think=null; }
+const LIVE_ICON={think:'think',search:'search',read:'read',write:'write',exec:'exec',look:'look',draw:'draw',memory:'memory',plan:'plan'};
+function setLive(kind,text){ if(!st.live) return; st.live.className='live show k-'+kind; st.live.querySelector('.lic').innerHTML=IC[LIVE_ICON[kind]||'exec'];
+  const s=st.live.querySelector('span'); s.textContent=text; s.className='shine dots'; }
+function hideLive(){ if(st.live) st.live.classList.remove('show'); }
+function toolEl(it,running){
+  const el=document.createElement('div'); el.className='tool'+(running?' run':'');
+  el.innerHTML=`<div class="head"><div class="ic">${IC[LIVE_ICON[it.kind]||'exec']}</div><span></span><div class="st">${running?'<div class="spin"></div>':''}</div><div class="chev">${IC.chev}</div></div><div class="body"></div>`;
+  el.querySelector('.head span').textContent=it.label; el.querySelector('.body').textContent=it.detail||'…';
   el.querySelector('.head').onclick=()=>el.classList.toggle('open');
-  if(!running) finishTool(el,item); return el;
+  if(running && it.name==='draw_image'){ const p=document.createElement('div'); p.className='painting'; el.appendChild(p); }
+  if(!running) finishTool(el,it); return el;
 }
-function finishTool(el,item){
-  el.className='tool'+(item.ok?'':' fail');
-  el.querySelector('.ic').innerHTML=item.ok?ICONS.ok:ICONS.bad;
-  el.querySelector('.body').textContent=item.detail||'';
-  if(item.image){ const im=document.createElement('img'); im.src=item.image; im.onclick=()=>{$('#zoomImg').src=item.image;$('#zoom').classList.add('show')}; el.appendChild(im); }
-  if(item.file){ const a=document.createElement('div'); a.className='file'; a.textContent='📂 '+item.file; a.onclick=()=>api().open_path(item.file); el.appendChild(a); }
+function finishTool(el,it){
+  el.classList.remove('run'); el.classList.toggle('fail',!it.ok);
+  el.querySelector('.st').innerHTML=`<div style="width:16px;height:16px">${it.ok?IC.ok:IC.bad}</div>`;
+  el.querySelector('.body').textContent=it.detail||'';
+  const p=el.querySelector('.painting'); if(p) p.remove();
+  if(it.image){ const im=document.createElement('img'); im.src=it.image; im.onclick=()=>{$('#zoomImg').src=it.image;$('#zoom').classList.add('show')}; el.appendChild(im); }
+  if(it.file){ const a=document.createElement('div'); a.className='file'; a.textContent='📂 '+it.file; a.onclick=()=>api().open_path(it.file); el.appendChild(a); }
 }
-function addError(t){ closeSeg(); const e=document.createElement('div'); e.className='err'; e.textContent=t; ensureTurn().appendChild(e); }
-function renderPlan(items){
-  state.plan=items||[]; const p=$('#plan'); p.classList.toggle('show', state.plan.length>0);
-  $('#planList').innerHTML=state.plan.map(x=>`<li class="${x.status}"><div class="b"></div><div>${esc(x.step)}</div></li>`).join('');
-  $('#planCount').textContent=`${state.plan.filter(x=>x.status==='done').length} из ${state.plan.length}`;
-}
+function addError(t){ closeSeg(); closeThink(); const e=place(document.createElement('div')); e.className='err'; e.textContent=t; }
+function addSwitch(t,loading){ closeSeg(); const s=place(document.createElement('div')); s.className='switch'+(loading?' load':''); s.textContent='⚡ '+t; return s; }
+function renderPlan(items){ st.plan=items||[]; const p=$('#plan'); p.classList.toggle('show',st.plan.length>0);
+  const done=st.plan.filter(x=>x.status==='done').length;
+  $('#planList').innerHTML=st.plan.map(x=>`<li class="${x.status}"><div class="b"></div><div>${esc(x.step)}</div></li>`).join('');
+  $('#planCount').textContent=`${done} из ${st.plan.length}`; $('#planBar').style.width=(st.plan.length?done/st.plan.length*100:0)+'%'; }
 $('#planHead').onclick=()=>$('#plan').classList.toggle('min');
 
 function renderDisplay(items){
-  thread.innerHTML=''; state.turn=null; renderPlan([]);
-  if(!items.length){ showEmpty(); return; }
+  thread.innerHTML=''; st.turn=null; renderPlan([]);
+  if(!items.length){ emptyChat(); return; }
   for(const it of items){
-    if(it.type==='user'){ addUser(it.text); state.turn=null; }
-    else if(it.type==='assistant'){ closeSeg(); const s=document.createElement('div'); s.className='md'; s.innerHTML=md(it.text); ensureTurn().appendChild(s); }
-    else if(it.type==='tool'){ closeSeg(); ensureTurn().appendChild(toolEl(it,false)); }
+    if(it.type==='user'){ addUser(it.text); st.turn=null; }
+    else if(it.type==='assistant'){ closeSeg(); const s=place(document.createElement('div')); s.className='md'; s.innerHTML=md(it.text); }
+    else if(it.type==='tool'){ closeSeg(); place(toolEl(it,false)); }
     else if(it.type==='plan'){ renderPlan(it.items); }
     else if(it.type==='error'){ addError(it.text); }
   }
-  closeSeg(); stick=true; down();
+  closeSeg(); hideLive(); stick=true; down();
 }
 
 // ---------- события от Мартышки ----------
+let switchEl=null;
 window.onEvents = evs => { for(const e of evs) onEvent(e); down(); };
 function onEvent(e){
   switch(e.type){
-    case 'status': $('#badgeText').textContent=(e.kind==='task'?'Агент · ':'Чат · ')+e.brain; $('#title').textContent=e.title; break;
-    case 'assistant_start': ensureTurn(); break;
-    case 'text': addText(e.text); break;
-    case 'progress': addProg(e.text); if(state.prog) state.prog.scrollTop=state.prog.scrollHeight; break;
-    case 'switch': { closeSeg(); const s=document.createElement('div'); s.className='switch'; s.textContent=e.text; ensureTurn().appendChild(s); break; }
-    case 'tool_start': { closeSeg(); const el=toolEl({label:e.label,detail:'выполняется…'},true); el.id='t_'+e.id; ensureTurn().appendChild(el); break; }
+    case 'status': setBrain(e.brain,e.super); $('#title').textContent=e.title; break;
+    case 'assistant_start': turnEl(); break;
+    case 'activity': if(e.kind==='think'){ setLive('think','Думает'); } else setLive(e.kind,e.text); break;
+    case 'text': if(switchEl){switchEl.classList.remove('load');switchEl=null} addText(e.text); break;
+    case 'progress': if(switchEl){switchEl.classList.remove('load');switchEl=null} addThink(e.text); setLive('think','Думает'); break;
+    case 'switch': switchEl=addSwitch(e.text,!/возвращ/i.test(e.text)); if(!switchEl.classList.contains('load')) switchEl=null; break;
+    case 'tool_start': { closeSeg(); closeThink(); if(switchEl){switchEl.classList.remove('load');switchEl=null}
+      const el=toolEl({label:e.label,detail:'выполняется…',kind:e.kind,name:e.name},true); el.id='t_'+e.id; place(el); break; }
     case 'tool_end': { const el=document.getElementById('t_'+e.id); if(el) finishTool(el,e); break; }
     case 'plan': renderPlan(e.items); break;
-    case 'confirm': $('#confirmText').textContent=e.text; $('#confirm').dataset.id=e.id; $('#confirm').classList.add('show'); break;
+    case 'confirm': openConfirm(e); break;
     case 'error': addError(e.text); break;
-    case 'done': closeSeg(); setBusy(false); refreshChats(); break;
+    case 'done': closeSeg(); closeThink(); hideLive(); setBusy(false); refreshChats(); break;
   }
 }
-document.querySelectorAll('#confirm [data-a]').forEach(b=>b.onclick=()=>{
-  const m=$('#confirm'); m.classList.remove('show'); api().answer(m.dataset.id,b.dataset.a); });
+
+// ---------- окно разрешения ----------
+function openConfirm(e){ const m=$('#confirm'); m.dataset.id=e.id;
+  $('#cTool').textContent=e.tool||''; $('#cText').textContent=e.question;
+  $('#cWhy').textContent=e.reason||''; $('#cWhy').style.display=e.reason?'block':'none';
+  const sc=$('#cScope'); sc.style.display=e.scope_label?'flex':'none'; sc.textContent='Разрешить '+(e.scope_label||'');
+  m.classList.add('show'); setLive('look','Жду твоего разрешения'); }
+function answer(v){ const m=$('#confirm'); if(!m.classList.contains('show')) return; m.classList.remove('show'); api().answer(m.dataset.id,v);
+  setLive(v==='no'?'think':'exec', v==='no'?'Думает':'Исполняю'); }
+document.querySelectorAll('#confirm [data-a]').forEach(b=>b.onclick=()=>answer(b.dataset.a));
+document.addEventListener('keydown',e=>{
+  if($('#confirm').classList.contains('show')){ if(e.key==='Enter'){e.preventDefault();answer('once')} if(e.key==='Escape'){e.preventDefault();answer('no')} return; }
+  if(e.key==='Escape'){ if($('#zoom').classList.contains('show')) $('#zoom').classList.remove('show'); else if(st.busy) api().stop(); }
+});
 
 // ---------- ввод ----------
-const input=$('#input'), sendBtn=$('#send');
-const SEND_SVG=sendBtn.innerHTML, STOP_SVG='<svg width="16" height="16" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="#ff8a95"/></svg>';
-function autosize(){ input.style.height='auto'; input.style.height=Math.min(input.scrollHeight,220)+'px'; sendBtn.disabled=!state.busy && !input.value.trim(); }
+const input=$('#input'), sendBtn=$('#send'); sendBtn.innerHTML=IC.send;
+function autosize(){ input.style.height='auto'; input.style.height=Math.min(input.scrollHeight,window.innerHeight*0.4)+'px'; sendBtn.disabled=!st.busy && !input.value.trim(); }
 input.addEventListener('input',autosize); window.addEventListener('resize',autosize);
-input.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); if(!state.busy) send(); }});
-sendBtn.onclick=()=> state.busy ? api().stop() : send();
-function setBusy(b){ state.busy=b; sendBtn.classList.toggle('stop',b); sendBtn.innerHTML=b?STOP_SVG:SEND_SVG; sendBtn.title=b?'Остановить':'Отправить (Enter)';
-  document.querySelectorAll('.orb').forEach(o=>o.classList.toggle('busy',b)); autosize(); }
+input.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); if(!st.busy) send(); } });
+sendBtn.onclick=()=> st.busy ? api().stop() : send();
+function setBusy(b){ st.busy=b; document.body.classList.toggle('busy',b); sendBtn.classList.toggle('stop',b); sendBtn.innerHTML=b?IC.stop:IC.send;
+  sendBtn.title=b?'Остановить (Esc)':'Отправить (Enter)'; autosize(); }
+function setBrain(label,sup){ $('#brainText').textContent=label; $('#brainpill').classList.toggle('super',!!sup); }
 async function send(text){
-  text=(text??input.value).trim(); if(!text||state.busy) return;
-  input.value=''; autosize(); addUser(text); state.turn=null; newTurn(); stick=true; down(); setBusy(true);
-  const r=await api().send(text,state.mode); if(!r||!r.ok){ setBusy(false); addError('Не получилось отправить.'); return; }
-  state.chatId=r.id;
+  text=(text??input.value).trim(); if(!text||st.busy) return;
+  show('chat'); input.value=''; autosize(); addUser(text); st.turn=null; newTurn(); setLive('think','Думает'); stick=true; down(); setBusy(true);
+  const r=await api().send(text,st.mode); if(!r||!r.ok){ setBusy(false); addError('Не получилось отправить.'); return; }
+  st.chatId=r.id;
 }
 document.querySelectorAll('#mode button').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('#mode button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); state.mode=b.dataset.m; });
-
-// клики по ссылкам, кнопкам «копировать», подсказкам
+  document.querySelectorAll('#mode button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); st.mode=b.dataset.m; });
 document.addEventListener('click',e=>{
   const a=e.target.closest('a[data-href]'); if(a){ e.preventDefault(); api().open_path(a.dataset.href); return; }
-  const c=e.target.closest('[data-copy]'); if(c){ navigator.clipboard.writeText(c.closest('.code').querySelector('pre').textContent); c.textContent='Скопировано'; setTimeout(()=>c.textContent='Копировать',1200); return; }
-  const q=e.target.closest('.chipbtn'); if(q){ send(q.dataset.q); }
+  const c=e.target.closest('[data-copy]'); if(c){ navigator.clipboard.writeText(c.closest('.code').querySelector('pre').textContent); c.textContent='Скопировано ✓'; setTimeout(()=>c.textContent='Копировать',1200); return; }
+  const q=e.target.closest('.sg'); if(q){ send(q.dataset.q); }
 });
 $('#zoom').onclick=()=>$('#zoom').classList.remove('show');
 
 // ---------- чаты ----------
 async function refreshChats(){
-  const list=await api().list_chats(); const box=$('#chats');
-  box.innerHTML='<h6>Чаты</h6>'+(list.length?'':'<div style="color:var(--dim);font-size:13px;padding:6px 10px">Пока пусто</div>');
-  for(const c of list){ const d=document.createElement('div'); d.className='chat'+(c.id===state.chatId?' on':'');
-    d.innerHTML='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;opacity:.6"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span></span><button class="del" title="Удалить чат">✕</button>';
-    d.querySelector('span').textContent=c.title;
+  const list=await api().list_chats(); const box=$('#chats'); box.innerHTML='';
+  for(const c of list){ const d=document.createElement('div'); d.className='chat'+(c.id===st.chatId?' on':'');
+    d.innerHTML='<span></span><button class="del" title="Удалить чат">✕</button>'; d.querySelector('span').textContent=c.title;
     d.onclick=()=>openChat(c.id);
     d.querySelector('.del').onclick=async ev=>{ ev.stopPropagation(); if(!confirm('Удалить чат «'+c.title+'»?')) return;
-      await api().delete_chat(c.id); if(c.id===state.chatId){ state.chatId=null; $('#title').textContent='Новый чат'; showEmpty(); renderPlan([]); } refreshChats(); };
+      await api().delete_chat(c.id); if(c.id===st.chatId){ st.chatId=null; $('#title').textContent='Новый чат'; emptyChat(); renderPlan([]); } refreshChats(); };
     box.appendChild(d); }
+  const rec=$('#recent'); rec.innerHTML=list.length?'':'<div class="empty-note">Пока пусто — начни первый чат.</div>';
+  for(const c of list.slice(0,5)){ const d=document.createElement('div'); d.className='li';
+    d.innerHTML=`<span></span><small>${new Date(c.updated*1000).toLocaleDateString('ru-RU',{day:'numeric',month:'short'})}</small>`;
+    d.querySelector('span').textContent=c.title; d.onclick=()=>{show('chat');openChat(c.id)}; rec.appendChild(d); }
 }
-async function openChat(id){ if(state.busy) return; const r=await api().open_chat(id); if(!r.ok) return;
-  state.chatId=r.id; $('#title').textContent=r.title; renderDisplay(r.display); refreshChats(); }
-$('#newChat').onclick=async()=>{ if(state.busy) return; await api().new_chat(); state.chatId=null; $('#title').textContent='Новый чат'; showEmpty(); renderPlan([]); refreshChats(); input.focus(); };
-$('#openWs').onclick=()=>api().open_workspace();
+async function openChat(id){ if(st.busy) return; const r=await api().open_chat(id); if(!r.ok) return;
+  st.chatId=r.id; $('#title').textContent=r.title; renderDisplay(r.display); refreshChats(); }
+$('#newChat').onclick=async()=>{ if(st.busy) return; await api().new_chat(); st.chatId=null; $('#title').textContent='Новый чат'; emptyChat(); renderPlan([]); refreshChats(); input.focus(); };
 
-// ---------- настройки ----------
-$('#openSettings').onclick=async()=>{ const s=await api().get_settings();
-  $('#s_brain').value=s.STUDIO_TASK_BRAIN||'auto'; $('#s_key').value=s.STUDIO_CLAUDE_KEY||''; $('#s_cmodel').value=s.STUDIO_CLAUDE_MODEL||'claude-opus-5-5';
-  $('#s_effort').value=s.STUDIO_CLAUDE_EFFORT||'high'; $('#s_ocloud').value=s.STUDIO_OLLAMA_CLOUD_MODEL||''; $('#s_local').value=s.STUDIO_LOCAL_AGENT_MODEL||'';
-  $('#s_auto').checked=!!s.STUDIO_AUTO_COMMANDS; $('#s_web').checked=!!s.WEB_ENABLED; $('#sdkNote').style.display=s.anthropic_installed?'none':'block';
-  $('#settings').classList.add('show'); };
-$('#sCancel').onclick=()=>$('#settings').classList.remove('show');
-$('#sSave').onclick=async()=>{ const r=await api().save_settings({STUDIO_TASK_BRAIN:$('#s_brain').value, STUDIO_CLAUDE_KEY:$('#s_key').value.trim(),
-  STUDIO_CLAUDE_MODEL:$('#s_cmodel').value, STUDIO_CLAUDE_EFFORT:$('#s_effort').value, STUDIO_OLLAMA_CLOUD_MODEL:$('#s_ocloud').value.trim(),
-  STUDIO_LOCAL_AGENT_MODEL:$('#s_local').value.trim(), STUDIO_AUTO_COMMANDS:$('#s_auto').checked, WEB_ENABLED:$('#s_web').checked});
-  $('#settings').classList.remove('show'); if(r&&r.brains) $('#badgeText').textContent='Задачи · '+r.brains.task; };
+// ---------- страницы ----------
+async function renderBrains(){ const b=(await api().init()).brains; st.data=b; const L=b.loaded||[];
+  const card=(tag,title,desc,model,hot)=>`<div class="bc ${hot?'hot':''}"><div class="tag">${tag}</div><h3>${title}</h3><p>${desc}</p><div class="model">${esc(model)}</div>
+    <div class="state ${L.some(m=>model.startsWith(m.split(':')[0]))?'on':''}"><i></i>${L.some(m=>model.startsWith(m.split(':')[0]))?'в видеопамяти':'выгружен'}</div></div>`;
+  $('#brainCards').innerHTML=card('Болтовня','Лёгкий','Быстрые ответы и разговор.',b.chat)+
+    card('Простые дела','Агент','Поиск, погода, открыть программу, нарисовать.',b.task)+
+    card('Программирование','⚡ Супер-мозг','Код, игры, сайты, сложные задачи. Включается сам и выгружается после.',b.code,true);
+  homeBrains(b); }
+function homeBrains(b){ $('#homeBrains').innerHTML=[['💬 Лёгкий',b.chat],['🛠 Агент',b.task],['⚡ Супер',b.code]].map(([n,m])=>`<div class="li"><span>${n}</span><small>${esc(String(m).replace(/\s*\(.*\)/,'').replace('⚡ супер-мозг ',''))}</small></div>`).join(''); }
+async function renderConnectors(list){ list=list||(await api().init()).connectors;
+  $('#connCards').innerHTML=list.map(c=>`<div class="bc"><div class="tag">${c.tools} инстр.</div><h3>${esc(c.title)}</h3><p>${esc(c.desc)}</p><div class="toggle ${c.on?'on':''}" data-k="${c.key}"></div></div>`).join('');
+  document.querySelectorAll('#connCards .toggle').forEach(t=>t.onclick=async()=>{ t.classList.toggle('on'); renderConnectors(await api().toggle_connector(t.dataset.k,t.classList.contains('on'))); }); }
+async function renderMemory(facts){ facts=facts||(await api().init()).memory; const box=$('#memList');
+  box.innerHTML=facts.length?'':'<div class="empty-note" style="text-align:center">Пока ничего не запомнила. Скажи в чате «запомни, что…».</div>';
+  facts.slice().reverse().forEach(f=>{ const d=document.createElement('div'); d.className='mem'; d.innerHTML='<span></span><button title="Забыть">✕</button>';
+    d.querySelector('span').textContent=f; d.querySelector('button').onclick=async()=>renderMemory(await api().forget_fact(f)); box.appendChild(d); });
+  const hm=$('#homeMem'); hm.innerHTML=facts.length?'':'<div class="empty-note">Пусто.</div>';
+  facts.slice(-4).reverse().forEach(f=>{ const d=document.createElement('div'); d.className='li'; d.innerHTML='<span></span>'; d.querySelector('span').textContent=f; hm.appendChild(d); }); }
+async function loadSettings(){ const s=await api().get_settings();
+  $('#s_brain').value=s.STUDIO_TASK_BRAIN||'auto'; $('#s_super').value=s.STUDIO_SUPER_MODEL||''; $('#s_local').value=s.STUDIO_LOCAL_AGENT_MODEL||'';
+  $('#s_key').value=s.STUDIO_CLAUDE_KEY||''; $('#s_ocloud').value=s.STUDIO_OLLAMA_CLOUD_MODEL||'';
+  $('#s_orb').checked=s.STUDIO_CLOSE_TO_ORB!==false; $('#s_auto').checked=!!s.STUDIO_AUTO_COMMANDS; $('#sdkNote').style.display=s.anthropic_installed?'none':'block'; }
+$('#sSave').onclick=async()=>{ const r=await api().save_settings({STUDIO_TASK_BRAIN:$('#s_brain').value, STUDIO_SUPER_MODEL:$('#s_super').value.trim(),
+  STUDIO_LOCAL_AGENT_MODEL:$('#s_local').value.trim(), STUDIO_CLAUDE_KEY:$('#s_key').value.trim(), STUDIO_OLLAMA_CLOUD_MODEL:$('#s_ocloud').value.trim(),
+  STUDIO_CLOSE_TO_ORB:$('#s_orb').checked, STUDIO_AUTO_COMMANDS:$('#s_auto').checked});
+  if(r&&r.brains){ setBrain('Готова · '+r.brains.chat,false); homeBrains(r.brains); } $('#savedNote').classList.add('show'); setTimeout(()=>$('#savedNote').classList.remove('show'),1800); };
 
 // ---------- старт ----------
-const api=()=>window.pywebview.api;
 window.addEventListener('pywebviewready', async()=>{
-  const r=await api().init(); $('#badgeText').textContent='Задачи · '+r.brains.task; showEmpty(); refreshChats(); input.focus();
+  const r=await api().init(); setBrain('Готова · '+r.brains.chat,false); homeBrains(r.brains); renderMemory(r.memory); emptyChat(); refreshChats(); autosize();
 });
 </script>
 </body>

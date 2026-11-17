@@ -170,6 +170,8 @@ STUDIO_SUPER_MODEL = "qwen3.6:35b-a3b"
 STUDIO_SUPER_CTX = 32768
 STUDIO_AUTO_COMMANDS = False         # True = команды в папке проектов выполнять без вопроса
 STUDIO_MAX_STEPS = 40                # сколько шагов агент может сделать за одну задачу
+STUDIO_DISABLED_GROUPS = []          # выключенные коннекторы: web, files, shell, pc, images, hands, memory
+STUDIO_CLOSE_TO_ORB = True           # крестик прячет окно в шарик (False — закрывать совсем)
 # Папка, где агент свободно создаёт файлы и проекты
 STUDIO_WORKSPACE = Path.home() / "Documents" / "Проекты Мартышки"
 
