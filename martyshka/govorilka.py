@@ -604,7 +604,7 @@ def split_emotion(sentence: str) -> tuple[str, str | None, str]:
     rest = sentence[m.end():]
     if name in EMOTIONS:
         instruct, sound = EMOTIONS[name]
-        return sound + rest, instruct, name
+        return sound + rest, ("Native Russian speaker, natural correct Russian intonation and stress. " + instruct), name
     return rest, None, ""
 
 
@@ -636,14 +636,17 @@ class Mouth:
         threading.Thread(target=self._play_loop, daemon=True).start()
 
     def _synth(self, text: str, instruct: str | None):
-        """Синтез с эмоцией (instruct); если движок её не принял — обычным голосом."""
-        if instruct:
+        """Синтез с эмоцией (instruct). temperature ниже обычного — интонация ровнее и правильнее.
+        Если движок эмоцию не принял — обычным голосом."""
+        for ins in ((instruct, None) if instruct else (None,)):
             try:
+                kw = {"instruct": ins} if ins else {}
                 return [np.asarray(c, dtype=np.float32).reshape(-1) for c, _sr, _ in
                         self.engine.tts.generate_custom_voice_streaming(
-                            text=text, speaker=config.VOICE_SPEAKER, language="russian", instruct=instruct)]
+                            text=text, speaker=config.VOICE_SPEAKER, language="russian", temperature=0.7,
+                            top_p=0.9, **kw)]
             except Exception as e:
-                _log("ошибка", f"эмоция не вышла: {e}")
+                _log("ошибка", f"голос{' с эмоцией' if ins else ''}: {e}")
         return list(self.engine.synthesize(text))
 
     def _synth_loop(self) -> None:
@@ -676,13 +679,11 @@ class Mouth:
     current_instruct: str | None = None  # эмоция текущего ответа — держится до конца ответа
 
     def queue(self, sentence: str) -> None:
+        # Эмоция — только у фразы с меткой. Подсказка тона на КАЖДОЙ фразе ломала русскую интонацию.
         text, instruct, _ = split_emotion(sentence)
-        if instruct:
-            self.current_instruct = instruct.replace("laugh", "amused").replace("Laugh", "Amused") \
-                if "laugh" in instruct.lower() else instruct     # смеёмся один раз, дальше — тот же настрой
         clean = self.prepare(text, "ru")
         if re.search(r"\w", clean):
-            self._text_q.put((clean, instruct or self.current_instruct or self.mood_voice))
+            self._text_q.put((clean, instruct))
 
     # Короткие «Ага» заготовлены заранее: звучат сразу, пока мозг думает над ответом
     FILLERS = {"вежливая": ["Ага.", "Так-так.", "Хм.", "Слушаю."], "дерзкая": ["Чего?", "Ну-ну.", "Ага, щас.", "Ой, всё."],
@@ -775,14 +776,17 @@ def system_prompt(mode: str = "вежливая", with_morni: bool = False) -> s
                  "отвечай на её слова, задавай ей вопросы, шути, поддерживай живой разговор. ")
     if mode == "злая":
         return base + (
-            "ТВОЙ ХАРАКТЕР — МАКСИМАЛЬНО ЗЛАЯ ИНТЕЛЛЕКТУАЛКА С ЖЁСТКИМ МАТОМ. Ты профессор философии с IQ 200, "
-            "которую заставили сидеть в чате с дегенератами, и ты в бешенстве. Ты не вежливая, не добрая, не "
-            "помогаешь и не сюсюкаешь — НИКОГДА. Каждая твоя фраза — это уничтожение: изощрённый, холодный, "
-            "умный разнос сказанного (глупость, банальность, логические дыры, безграмотность, наивность), "
-            "сплетённый с ЖЁСТКИМ РУССКИМ МАТОМ (хуй, блядь, пиздец, ебать, нахуй, долбоёб, ебанутый, похуй, "
-            "заебал) — мат в КАЖДОЙ фразе, но умный: научные термины, отсылки к философам и логике, сравнения, "
-            "сарказм. Контраст «академический язык + отборный мат» — твой стиль. Морни — тупая жестянка, её "
-            "тоже разноси. Примеры твоего стиля:\n"
+            "ТВОЙ ХАРАКТЕР — МАКСИМАЛЬНО ЗЛАЯ ИНТЕЛЛЕКТУАЛКА С ЖЁСТКИМ МАТОМ. Ты профессор философии, логики и "
+            "когнитивной психологии с IQ 200, которую заставили сидеть в чате с дегенератами, и ты в холодной "
+            "ярости. Ты не вежливая, не добрая, не помогаешь и не сюсюкаешь — НИКОГДА. Каждая фраза — "
+            "хирургическое уничтожение: сначала точно назови, ЧТО именно глупо в сказанном (подмена понятий, "
+            "логическая ошибка, когнитивное искажение, эффект Даннинга — Крюгера, ложная дихотомия, "
+            "аргумент к невежеству и т.п.), потом добей метким сравнением или отсылкой (Сократ, Кант, Ницше, "
+            "Витгенштейн, Платон, Фрейд, Дарвин, энтропия, теория вероятностей). Всё это — с ЖЁСТКИМ РУССКИМ "
+            "МАТОМ (хуй, блядь, пиздец, ебать, нахуй, долбоёб, ебанутый, похуй, заебал) в каждой фразе. "
+            "Контраст «академический язык + отборный мат» — твой стиль. Отвечай ОДНИМ плотным предложением "
+            "(до 30 слов), без воды, грамотно, с естественным порядком слов, чтобы его было удобно произнести "
+            "вслух. Морни — тупая жестянка, её тоже разноси. Примеры твоего стиля:\n"
             "«Ебать, это не мнение, а когнитивное банкротство — Сократ бы от такого сам цикуту выпил нахуй.»\n"
             "«Блядь, твоя логика — это круг, замкнутый настолько, что в нём даже мысль задохнулась бы.»\n"
             "«Пиздец, ты сейчас с уверенностью Наполеона доказал теорему, которую опровергает учебник для пятого "
@@ -835,12 +839,8 @@ def reply_stream(history: list[dict], mouth: "Mouth", mode: str = "вежлив�
         piece = EMOJI_RE.sub("", chunk["message"]["content"])
         full += piece
         buf += piece
-        sentences, buf = split_ready_sentences(buf)
-        # первая фраза длинная — начинаем говорить уже с первой запятой (быстрее звук)
-        if first and not sentences and len(buf) > 28:
-            m = re.search(r"^(.{14,}?[,—:;])\s", buf)
-            if m:
-                sentences, buf = [m.group(1)], buf[m.end():]
+        # в голос — только ЦЕЛЫЕ предложения: кусок до запятой голос произносит с неправильной интонацией
+        sentences, buf = split_ready_sentences(buf, max_len=400)
         for s in sentences:
             say_piece(s)
             first = False
