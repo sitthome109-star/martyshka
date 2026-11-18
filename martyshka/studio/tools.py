@@ -135,6 +135,15 @@ TOOLS = [
                     "заметки, окно, погода, заряд, буфер, скриншот, фото, видео, таблица, документ. "
                     "args — параметры по порядку (например name=громкость, args=[\"50\"]).",
      "input_schema": _schema({"name": S, "args": {"type": "array", "items": S}}, ["name"])},
+    {"name": "make_icon", "group": "images",
+     "description": "Сделать иконку Windows (.ico, все размеры 16–256) из картинки PNG/JPG. Обычно сначала "
+                    "draw_image (квадратная, простой крупный силуэт, контрастный фон), потом make_icon.",
+     "input_schema": _schema({"image": S, "out": S}, ["image", "out"])},
+    {"name": "update_app", "group": "files",
+     "description": "Применить изменения в САМОЙ Студии: пересобрать «Мартышка Студия.exe» (с иконкой "
+                    "martyshka/studio/studio.ico, если она есть), обновить ярлык на рабочем столе и перезапустить "
+                    "Студию ПОСЛЕ ответа брату. Вызывай последним шагом, когда правила свои файлы.",
+     "input_schema": _schema({"restart": {"type": "boolean"}}, ["restart"])},
     {"name": "remember", "group": "memory",
      "description": "Запомнить надолго полезный факт: где лежит проект, как брат любит, какие программы у него "
                     "есть. Коротко, одной фразой.",
@@ -169,7 +178,26 @@ ACTIVITY = {
     "screen_look": ("look", "Смотрю на экран"), "click": ("exec", "Кликаю"), "press_keys": ("exec", "Нажимаю"),
     "type_text": ("write", "Печатаю"), "draw_image": ("draw", "Рисую"), "open_path": ("exec", "Открываю"),
     "martyshka_action": ("exec", "Делаю"), "remember": ("memory", "Запоминаю"),
+    "make_icon": ("draw", "Делаю иконку"), "update_app": ("exec", "Обновляю Студию"),
 }
+
+
+# ---------- резервные копии своих файлов ----------
+BACKUP_DIR = config.DATA_DIR / "studio" / "резерв"
+
+
+def _backup_if_own(p: Path) -> str:
+    """Перед правкой файлов самой Мартышки кладём копию в data/studio/резерв — чтобы можно было откатить."""
+    try:
+        rel = p.resolve().relative_to(config.PROJECT_DIR.resolve())
+    except ValueError:
+        return ""
+    if not p.exists() or rel.parts[:1] in (("data",), (".venv",), ("models",)):
+        return ""
+    dest = BACKUP_DIR / time.strftime("%Y%m%d-%H%M%S") / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(p.read_bytes())
+    return f" (копия старой версии: {dest})"
 
 
 def label(name: str, args: dict) -> str:
@@ -205,8 +233,12 @@ def _foreground_app() -> str:
 
 def permission(name: str, args: dict) -> dict | None:
     """Нужно ли спросить брата. Возвращает {question, scope, scope_label} или None."""
-    if name in ("write_file", "edit_file"):
-        p = _path(args.get("path", ""))
+    if name == "update_app":
+        return {"question": "Пересобрать «Мартышка Студия.exe», обновить ярлык на рабочем столе"
+                            + (" и перезапустить Студию" if args.get("restart") else ""),
+                "scope": "app:studio", "scope_label": "все изменения самой Студии"}
+    if name in ("write_file", "edit_file", "make_icon"):
+        p = _path(args.get("path") or args.get("out") or "")
         if not _inside_ws(p):
             return {"question": f"Изменить файл вне папки проектов:\n{p}", "scope": f"dir:{p.parent}",
                     "scope_label": f"всё в папке «{p.parent.name or p.parent}»"}
@@ -333,8 +365,9 @@ def _run(name: str, args: dict, ctx: dict) -> dict:
     if name == "write_file":
         p = _path(args["path"])
         p.parent.mkdir(parents=True, exist_ok=True)
+        note = _backup_if_own(p)
         p.write_text(args["content"], encoding="utf-8")
-        return {"text": f"Записано: {p} ({len(args['content'])} символов).", "ok": True, "file": str(p)}
+        return {"text": f"Записано: {p} ({len(args['content'])} символов).{note}", "ok": True, "file": str(p)}
 
     if name == "edit_file":
         p = _path(args["path"])
@@ -343,8 +376,42 @@ def _run(name: str, args: dict, ctx: dict) -> dict:
         if n != 1:
             return {"text": f"Кусок old найден {n} раз(а), а нужно ровно 1. Прочитай файл и возьми больше "
                             "соседнего текста.", "ok": False}
+        note = _backup_if_own(p)
         p.write_text(text.replace(args["old"], args["new"]), encoding="utf-8")
-        return {"text": f"Исправлено: {p}", "ok": True, "file": str(p)}
+        return {"text": f"Исправлено: {p}{note}", "ok": True, "file": str(p)}
+
+    if name == "make_icon":
+        from PIL import Image
+        src, out = _path(args["image"]), _path(args["out"])
+        if not src.exists():
+            return {"text": f"Нет картинки: {src}", "ok": False}
+        im = Image.open(src).convert("RGBA")
+        side = min(im.size)                                    # квадрат по центру
+        im = im.crop(((im.width - side) // 2, (im.height - side) // 2,
+                      (im.width + side) // 2, (im.height + side) // 2)).resize((256, 256), Image.LANCZOS)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        _backup_if_own(out)
+        im.save(out, format="ICO", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+        prev = out.with_suffix(".png")
+        im.save(prev)
+        return {"text": f"Иконка готова: {out}", "ok": True, "image": _thumb(prev), "file": str(out)}
+
+    if name == "update_app":
+        from . import build_exe
+        exe = build_exe.build()
+        lnk = Path(os.path.expandvars(r"%USERPROFILE%")) / "Desktop" / "Мартышка Студия.lnk"
+        icon = build_exe.icon_path()
+        ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:L);$s.TargetPath=$env:T;"
+              "$s.WorkingDirectory=$env:D;$s.IconLocation=$env:I;$s.Description='Мартышка Студия';$s.Save()")
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, creationflags=0x08000000,
+                       env=dict(os.environ, L=str(lnk), T=str(exe), D=str(config.PROJECT_DIR), I=str(icon)))
+        # Windows запоминает старые значки — просим обновить
+        subprocess.run(["ie4uinit.exe", "-show"], capture_output=True, creationflags=0x08000000)
+        if args.get("restart") and ctx.get("request_restart"):
+            ctx["request_restart"]()
+            return {"text": f"Пересобрала {exe.name}, ярлык обновлён. Студия перезапустится сама через пару "
+                            "секунд после ответа — скажи об этом брату.", "ok": True}
+        return {"text": f"Пересобрала {exe.name}, ярлык обновлён ({icon.name}).", "ok": True}
 
     if name == "run_command":
         cmd = args["command"]

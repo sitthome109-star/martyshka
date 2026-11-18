@@ -112,6 +112,14 @@ class Api:
         self.stop()
         threading.Thread(target=self._quit_all, daemon=True).start()
 
+    def restart(self) -> None:
+        """Перезапуск Студии (после того как агент поменял её саму): новая копия стартует через 3 секунды,
+        когда эта уже закроется."""
+        exe = config.PROJECT_DIR / "Мартышка Студия.exe"
+        subprocess.Popen(["cmd", "/c", f'timeout /t 3 /nobreak >nul & start "" "{exe}"'],
+                         cwd=str(config.PROJECT_DIR), creationflags=0x08000000 | 0x00000008)   # без окна, отдельно
+        self.quit()
+
     def _quit_all(self) -> None:
         self._quitting = True
         for w in (self._orb, self._window):
@@ -209,6 +217,10 @@ class Api:
                 self._emit({"type": "done"})
             finally:
                 self._busy = False
+            if self._chat.restart_requested:
+                self._chat.restart_requested = False
+                time.sleep(2.5)                     # чтобы брат успел прочитать ответ
+                self.restart()
         threading.Thread(target=work, daemon=True).start()
         return {"ok": True, "id": self._chat.id}
 
@@ -361,6 +373,7 @@ def main() -> None:
         threading.Thread(target=api._watch_show_flag, daemon=True).start()
         brains.chat_brain().warm()             # лёгкий мозг заранее в памяти — первый ответ без ожидания
 
-    icon = config.PROJECT_DIR / "martyshka" / "martyshka.ico"
+    from .build_exe import icon_path
+    icon = icon_path()
     webview.start(started, gui="edgechromium", debug=bool(os.environ.get("STUDIO_DEBUG")),
                   icon=str(icon) if icon.exists() else None)
