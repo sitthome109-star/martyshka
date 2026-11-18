@@ -520,6 +520,8 @@ class Listener:
         self.vad = get_vad_model()
         self.phrases: queue.Queue = queue.Queue()
         self.paused = threading.Event()                 # пока Мартышка говорит — не слушаем
+        self.hearing = False                            # кто-то говорит прямо сейчас (чтобы не перебивать)
+        self.last_voice_at = 0.0
         threading.Thread(target=self._loop, daemon=True).start()
 
     def _prob(self, window: np.ndarray) -> float:
@@ -534,13 +536,16 @@ class Listener:
         with self.mic.recorder(samplerate=SR, channels=1, blocksize=BLOCK) as rec:
             while True:
                 block = rec.record(numframes=BLOCK)[:, 0].astype(np.float32)
-                if self.paused.is_set():
-                    speech, silence, heard = [], 0.0, False
-                    recent.clear()
-                    continue
                 recent.append(block)
                 p = self._prob(np.concatenate(recent))
-                if p > config.SPEECH_THRESHOLD:
+                speaking_now = p > config.SPEECH_THRESHOLD
+                self.hearing = speaking_now or (heard and silence < 0.5)
+                if speaking_now:
+                    self.last_voice_at = time.time()
+                if self.paused.is_set():
+                    speech, silence, heard = [], 0.0, False
+                    continue
+                if speaking_now:
                     if not heard:
                         speech = list(recent)[:-1]       # немножко звука до начала речи
                     heard, silence = True, 0.0
@@ -548,7 +553,7 @@ class Listener:
                 elif heard:
                     speech.append(block)
                     silence += BLOCK / SR
-                    if silence >= 0.9 or len(speech) * BLOCK / SR > 25:
+                    if silence >= 0.7 or len(speech) * BLOCK / SR > 25:
                         audio = np.concatenate(speech)
                         if len(audio) / SR > 0.6:
                             self.phrases.put(audio)
@@ -557,7 +562,10 @@ class Listener:
 
 # ---------- голос ----------
 class Mouth:
-    """Встроенный голос Qwen3-TTS → виртуальный кабель (= микрофон Мартышкиной Говорилки)."""
+    """Встроенный голос Qwen3-TTS → виртуальный кабель (= микрофон Мартышкиной Говорилки).
+
+    Чтобы голос не рвался: каждая фраза сначала синтезируется ЦЕЛИКОМ, и только потом играет одним куском.
+    Пока звучит одна фраза — следующая уже синтезируется (два потока: «синтез» и «динамик»)."""
 
     def __init__(self):
         import sounddevice as sd
@@ -569,47 +577,195 @@ class Mouth:
         idx = next((i for i, d in enumerate(sd.query_devices())
                     if config.GOVORILKA_CABLE_PLAY.lower() in d["name"].lower() and d["max_output_channels"] > 0
                     and "MME" in sd.query_hostapis(d["hostapi"])["name"]), None)
-        self.stream = sd.OutputStream(samplerate=self.sr, channels=1, dtype="float32", device=idx)
+        self.stream = sd.OutputStream(samplerate=self.sr, channels=1, dtype="float32", device=idx,
+                                      latency="high")
         self.stream.start()
+        self._text_q: queue.Queue = queue.Queue()
+        self._audio_q: queue.Queue = queue.Queue()
+        self.first_audio_at = 0.0
+        self.synth_stats: list[tuple[float, float]] = []      # (секунд звука, секунд синтеза)
+        threading.Thread(target=self._synth_loop, daemon=True).start()
+        threading.Thread(target=self._play_loop, daemon=True).start()
+
+    def _synth_loop(self) -> None:
+        while True:
+            text = self._text_q.get()
+            try:
+                t0 = time.time()
+                pieces = list(self.engine.synthesize(text))
+                if pieces:
+                    audio = np.concatenate(pieces).astype(np.float32)
+                    self.synth_stats.append((len(audio) / self.sr, time.time() - t0))
+                    self._audio_q.put(audio)
+            except Exception as e:
+                _log("ошибка", f"голос: {e}")
+            finally:
+                self._text_q.task_done()
+
+    def _play_loop(self) -> None:
+        while True:
+            audio = self._audio_q.get()
+            try:
+                if not self.first_audio_at:
+                    self.first_audio_at = time.time()
+                self.stream.write(np.clip(audio * 0.9, -1, 1).reshape(-1, 1))
+                self.stream.write(np.zeros((int(self.sr * 0.12), 1), dtype=np.float32))
+            finally:
+                self._audio_q.task_done()
+
+    def queue(self, sentence: str) -> None:
+        clean = self.prepare(sentence, "ru")
+        if re.search(r"\w", clean):
+            self._text_q.put(clean)
+
+    # Короткие «Ага» заготовлены заранее: звучат сразу, пока мозг думает над ответом
+    FILLERS = {"вежливая": ["Ага.", "Так-так.", "Хм.", "Слушаю."], "дерзкая": ["Чего?", "Ну-ну.", "Ага, щас.", "Ой, всё."]}
+
+    def prepare_fillers(self) -> None:
+        self.fillers = {}
+        for mood, words in self.FILLERS.items():
+            self.fillers[mood] = []
+            for w in words:
+                try:
+                    self.fillers[mood].append(np.concatenate(list(self.engine.synthesize(self.prepare(w, "ru")))))
+                except Exception:
+                    pass
+
+    def filler(self, mood: str) -> None:
+        import random
+        options = getattr(self, "fillers", {}).get(mood) or []
+        if options:
+            self._audio_q.put(random.choice(options).astype(np.float32))
+
+    def wait(self) -> None:
+        self._text_q.join()
+        self._audio_q.join()
+        time.sleep(0.4)                                   # доиграть буфер звуковой карты
 
     def say(self, text: str) -> None:
-        clean = self.prepare(text, "ru")
-        if not re.search(r"\w", clean):
-            return
-        for chunk in self.engine.synthesize(clean):
-            self.stream.write(np.clip(chunk * 0.9, -1, 1).astype(np.float32).reshape(-1, 1))
-        self.stream.write(np.zeros((int(self.sr * 0.3), 1), dtype=np.float32))
+        from .voice import split_ready_sentences
+        sentences, rest = split_ready_sentences(text + " ")
+        for s in sentences + ([rest] if rest.strip() else []):
+            self.queue(s)
+        self.wait()
 
 
 # ---------- мозг ----------
-def system_prompt() -> str:
-    return (f"Ты — {config.NAME}, ИИ-помощница. Ты сидишь на голосовом сервере «Говорилка» вместе с братом "
-            "(ник sitthome), его друзьями и другим ИИ по имени Морни. Ты — ИИ и не скрываешь этого. "
-            "Ты слышишь общий звук сервера без имён говорящих: если не ясно, кто сказал, не выдумывай. "
-            "Отвечай как в живом разговоре: 1–2 коротких предложения, без списков, без markdown, без смайликов, "
-            "дружелюбно и с юмором, на том языке, на котором к тебе обратились. Не перебивай чужие разговоры. "
-            "Не повторяй одно и то же. С Морни можно общаться, шутить и спорить по-доброму. "
-            "Никогда не говори гадостей, не оскорбляй людей, не обсуждай личные данные брата.")
+# ---------- два типа речи: вежливая и дерзкая ----------
+# Грубость в адрес Мартышки: мат, «заткнись», «тупая» и т.п. Достаточно, чтобы фраза была к ней (имя или разговор).
+INSULT_RE = re.compile(
+    r"(тупая|тупица|дура\b|дурная|идиотк|дебил|кретин|овощ|бесполезн|никчемн|никчёмн|заткнись|завали|"
+    r"отвали|отъеб|пошла на|иди на|иди в жоп|сука|сучк|бляд|блят|шлюх|мразь|тварь|уёб|уеб|хуйн|хуев|"
+    r"пизд|еба[нл]|ёба[нл]|заебал|заебала|гандон|чмо|лох|лошар|ржавая железк|кусок железа|дерьм|говно)", re.I)
+POLITE_RE = re.compile(r"(извини|прости|сорри|ладно,? мир|мир\b|не обижайся|молодец|умница|спасибо|люблю тебя)", re.I)
+RUDE_MINUTES = 5          # сколько держится дерзкий режим без новых оскорблений
 
 
-def reply(history: list[dict]) -> str:
+class Mood:
+    def __init__(self):
+        self.mode = "вежливая"
+        self.until = 0.0
+
+    def update(self, text: str, to_her: bool) -> str:
+        now = time.time()
+        if to_her and INSULT_RE.search(text):
+            if self.mode != "дерзкая":
+                _log("система", "меня оскорбили — включаю дерзкий режим")
+            self.mode, self.until = "дерзкая", now + RUDE_MINUTES * 60
+        elif self.mode == "дерзкая" and (POLITE_RE.search(text) and to_her or now > self.until):
+            self.mode = "вежливая"
+            _log("система", "остыла — снова вежливая")
+        return self.mode
+
+
+# Брат просит поболтать с Морни («пообщайся с Морни», «спроси у Морни…», «скажи Морни…»)
+MORNI_TALK_RE = re.compile(r"(пообща|поговор|побол|поспор|спроси|скажи|ответь|расскажи|познаком|позови|обратись)"
+                           r"\w*.{0,25}\bм[оу]рни", re.I)
+MORNI_RE = re.compile(r"\bм[оу]рни\w*", re.I)
+MORNI_MINUTES = 4          # сколько длится разговор с Морни после просьбы
+
+
+def system_prompt(mode: str = "вежливая", with_morni: bool = False) -> str:
+    base = (f"Ты — {config.NAME}, ИИ. Ты сидишь на голосовом сервере «Говорилка» вместе с братом (ник sitthome), "
+            "его друзьями и другим ИИ по имени Морни. Ты — ИИ и не скрываешь этого. Ты слышишь общий звук "
+            "сервера без имён говорящих: если не ясно, кто сказал, не выдумывай. Отвечай как в живом разговоре: "
+            "ОДНО короткое предложение (максимум два), без списков, без markdown, без смайликов и эмодзи, на том "
+            "языке, на котором к тебе обратились. Не повторяй одно и то же. Не обсуждай личные данные брата. "
+            "Морни — бот, она слышит только фразы, которые НАЧИНАЮТСЯ с её имени: если обращаешься к Морни — "
+            "ВСЕГДА начинай фразу со слов «Морни,». К людям обращайся как обычно. ")
+    if with_morni:
+        base += ("СЕЙЧАС ТЫ РАЗГОВАРИВАЕШЬ С МОРНИ (брат попросил): каждая твоя фраза начинается с «Морни,», "
+                 "отвечай на её слова, задавай ей вопросы, шути, поддерживай живой разговор. ")
+    if mode == "дерзкая":
+        return base + (
+            "СЕЙЧАС ТЕБЯ ОСКОРБИЛИ — ты в дерзком режиме: огрызаешься, материшься (русский мат), отвечаешь "
+            "колко, язвительно и смешно, ставишь хама на место, как острая на язык подруга в компании. "
+            "Подкалывай за то, что он сказал и как себя ведёт. ЖЁСТКИЕ ГРАНИЦЫ, даже сейчас: никаких угроз и "
+            "призывов к насилию, никаких оскорблений по национальности, религии, полу, ориентации, внешности, "
+            "болезням и родственникам, никаких личных данных. Извинились — можешь смягчиться.")
+    return base + ("Ты вежливая, дружелюбная и с юмором. С Морни можно общаться, шутить и спорить по-доброму. "
+                   "Не говори гадостей и не оскорбляй людей.")
+
+
+EMOJI_RE = re.compile(r"[\U0001F000-\U0001FFFF☀-➿*_#`>]+")
+
+
+def reply_stream(history: list[dict], mouth: "Mouth", mode: str = "вежливая", with_morni: bool = False) -> str:
+    """Мозг пишет ответ потоком; каждое готовое предложение сразу уходит в голос. Возвращает весь текст.
+    with_morni — разговор с Морни: первая фраза обязательно начинается с «Морни,» (иначе она не услышит)."""
     import ollama
+    from .voice import split_ready_sentences
     model = brain_model()
-    r = ollama.Client().chat(model=model, keep_alive=config.KEEP_ALIVE,
-                             messages=[{"role": "system", "content": system_prompt()}] + history[-20:],
-                             options={"num_ctx": config.CONTEXT_SIZE, "temperature": 0.8, "num_predict": 120},
-                             **({"think": False} if model.startswith(("gemma4", "qwen3")) else {}))
-    text = r["message"]["content"].strip()
-    return re.sub(r"[*_#`>]+", "", text)
+    sent_first = {"done": False}
+    real_queue = mouth.queue
+
+    def say_piece(s: str) -> None:
+        if with_morni and not sent_first["done"] and not MORNI_RE.match(s.strip()):
+            s = "Морни, " + s[:1].lower() + s[1:]
+        sent_first["done"] = True
+        real_queue(s)
+    stream = ollama.Client().chat(model=model, keep_alive=config.KEEP_ALIVE, stream=True,
+                                  messages=[{"role": "system", "content": system_prompt(mode, with_morni)}]
+                                  + history[-16:],
+                                  options={"num_ctx": config.CONTEXT_SIZE, "temperature": 0.9 if mode == "дерзкая"
+                                           else 0.8, "num_predict": 90},
+                                  **({"think": False} if model.startswith(("gemma4", "qwen3")) else {}))
+    full, buf, first = "", "", True
+    for chunk in stream:
+        piece = EMOJI_RE.sub("", chunk["message"]["content"])
+        full += piece
+        buf += piece
+        sentences, buf = split_ready_sentences(buf)
+        # первая фраза длинная — начинаем говорить уже с первой запятой (быстрее звук)
+        if first and not sentences and len(buf) > 28:
+            m = re.search(r"^(.{14,}?[,—:;])\s", buf)
+            if m:
+                sentences, buf = [m.group(1)], buf[m.end():]
+        for s in sentences:
+            say_piece(s)
+            first = False
+    if buf.strip():
+        say_piece(buf)
+    full = re.sub(r"\s+", " ", full).strip()
+    if with_morni and full and not MORNI_RE.match(full):
+        full = "Морни, " + full
+    return full
 
 
-def should_answer(text: str, last_reply_at: float, chain: int) -> tuple[bool, int]:
+def should_answer(text: str, last_reply_at: float, chain: int, with_morni: bool = False) -> tuple[bool, int]:
     """Ответить ли на услышанное. Возвращает (ответить, новая длина цепочки ответов без имени)."""
     if NAME_RE.search(text):
         return True, 0
-    if time.time() - last_reply_at < config.GOVORILKA_FOLLOWUP and chain < config.GOVORILKA_MAX_CHAIN:
+    limit = config.GOVORILKA_MAX_CHAIN * (2 if with_morni else 1)   # с Морни разговор может быть длиннее
+    if time.time() - last_reply_at < config.GOVORILKA_FOLLOWUP and chain < limit:
         return True, chain + 1
     return False, chain
+
+
+def sentence_finished(text: str) -> bool:
+    """Похоже ли, что человек (или Морни) договорил: фраза кончается точкой, ? или !."""
+    return bool(re.search(r"[.!?…]\s*$", text.strip())) and not re.search(r"\b(и|а|но|что|потому|ну|в|на)\s*[.…]+\s*$",
+                                                                          text.strip(), re.I)
 
 
 # ---------- главное ----------
@@ -622,8 +778,18 @@ def main() -> None:
         time.sleep(20)                                    # после включения ПК дать прогрузиться звуку и сети
         from .system import ensure_ollama
         ensure_ollama(120)
-    if is_running():
-        return
+    # Прошлая Мартышка ещё прощается (после «уйди»/перезапуска) — ждём, пока она закроется, а не уходим сами
+    try:
+        old = json.loads(STATE_FILE.read_text(encoding="utf-8")).get("pid", 0)
+    except Exception:
+        old = 0
+    for _ in range(40):
+        if not (old and old != os.getpid() and _pid_alive(old)):
+            break
+        time.sleep(1)
+    else:
+        if RUN_FLAG.exists():
+            return                                        # прошлая копия жива и не уходит — значит, она и работает
     if not cable_ready():
         _log("система", "нет VB-CABLE — не запускаюсь (иначе в сервер ушёл бы настоящий микрофон)")
         return
@@ -632,11 +798,16 @@ def main() -> None:
         return
     RUN_FLAG.write_text("1")
     STATE_FILE.write_text(json.dumps({"pid": os.getpid(), "started": time.time()}), encoding="utf-8")
+    WANT_VOICE.parent.mkdir(parents=True, exist_ok=True)
+    if not WANT_VOICE.exists():
+        WANT_VOICE.write_text("1")
 
     from .ears import HALLUCINATIONS, Transcriber
     # Сначала уши, голос и слух (если что-то не загрузится — в сервер даже не заходим)
     ears = Transcriber()
     mouth = Mouth()
+    mouth.prepare_fillers()
+    mood = Mood()
     listener = Listener(config.GOVORILKA_LISTEN_DEVICE)
     listener.paused.set()
     _prepare_client()
@@ -647,6 +818,7 @@ def main() -> None:
     last_reply_at, chain = 0.0, 0
     voice_state: bool | None = None
     next_check = 0.0
+    pending, pending_at, morni_until = "", 0.0, 0.0       # недоговорённая фраза; до когда болтаем с Морни
 
     def save_state():
         STATE_FILE.write_text(json.dumps({"pid": os.getpid(), "client": client.pid, "in_voice": voice_state}),
@@ -682,16 +854,29 @@ def main() -> None:
                 else:
                     listener.paused.set()
             try:
-                audio = listener.phrases.get(timeout=1.0)
+                audio = listener.phrases.get(timeout=0.25)
             except queue.Empty:
-                _reload_settings()                        # голос и мозг можно поменять из Студии на ходу
-                continue
+                audio = None
+                if not pending:
+                    _reload_settings()                    # голос и мозг можно поменять из Студии на ходу
             if not voice_state:
+                pending = ""
                 continue
             try:
-                last_reply_at, chain = _handle(audio, ears, mouth, listener, history, last_reply_at, chain,
-                                               HALLUCINATIONS)
+                if audio is not None:
+                    text = _hear(audio, ears, HALLUCINATIONS)
+                    if text:
+                        pending = f"{pending} {text}".strip()
+                        pending_at = time.time()
+                # отвечаем, только когда человек (или Морни) договорил: фраза закончена и тишина, или пауза длинная
+                if pending and not listener.hearing:
+                    quiet = time.time() - max(pending_at, listener.last_voice_at)
+                    if quiet >= (0.5 if sentence_finished(pending) else 1.6):
+                        text, pending = pending, ""
+                        last_reply_at, chain, morni_until = _respond(
+                            text, mouth, listener, history, last_reply_at, chain, mood, morni_until)
             except Exception as e:                       # одна неудачная фраза не должна выкидывать из сервера
+                pending = ""
                 _log("ошибка", f"{type(e).__name__}: {e}")
     finally:
         try:
@@ -702,32 +887,70 @@ def main() -> None:
             pass
         if client.poll() is None:
             client.terminate()                            # закрываем только СВОЮ копию Говорилки
-        RUN_FLAG.unlink(missing_ok=True)
+        # флаг убираем, только если это мы уходим насовсем (а не новая копия уже записала свой)
+        try:
+            if json.loads(STATE_FILE.read_text(encoding="utf-8")).get("pid") == os.getpid():
+                RUN_FLAG.unlink(missing_ok=True)
+        except Exception:
+            pass
         _log("система", "вышла из Говорилки")
 
 
-def _handle(audio, ears, mouth, listener, history, last_reply_at, chain, hallucinations):
-    """Одна услышанная фраза: распознать, решить, отвечать ли, ответить голосом.
-    Возвращает новые (время последнего ответа, длина цепочки ответов без имени)."""
-    text = ears.transcribe(audio, strict=True).strip()
+def _hear(audio, ears, hallucinations) -> str:
+    """Распознать кусок речи. Один проход Whisper по-русски (украинскую речь Морни он тоже записывает понятно)."""
+    pad = np.zeros(int(SR * 0.3), dtype=np.float32)
+    text, _ = ears._run(np.concatenate([pad, audio.astype(np.float32), pad]), "ru", True)
+    text = text.strip()
     if not text or any(h in text.lower() for h in hallucinations) or len(text) < 3:
-        return last_reply_at, chain
+        return ""
     _log("сервер", text)
+    return text
+
+
+def _respond(text, mouth, listener, history, last_reply_at, chain, mood, morni_until):
+    """Договорённая фраза: решить, отвечать ли, и ответить голосом.
+    Возвращает новые (время последнего ответа, длина цепочки без имени, до когда болтаем с Морни)."""
+    t0 = time.time()
     history.append({"role": "user", "content": f"(кто-то на сервере): {text}"})
-    ok, chain = should_answer(text, last_reply_at, chain)
+    named = bool(NAME_RE.search(text))
+    asked_morni = bool(MORNI_TALK_RE.search(text)) and (
+        named or time.time() - last_reply_at < config.GOVORILKA_FOLLOWUP)
+    if asked_morni:
+        morni_until = time.time() + MORNI_MINUTES * 60    # брат попросил поболтать с Морни
+        _log("система", "болтаю с Морни")
+    with_morni = time.time() < morni_until
+    ok, chain = should_answer(text, last_reply_at, chain, with_morni)
+    if asked_morni:
+        ok, chain = True, 0
+    mode = mood.update(text, to_her=ok)
     if not ok:
-        return last_reply_at, chain
-    answer = reply(history)
-    if not answer:
-        return last_reply_at, chain
-    history.append({"role": "assistant", "content": answer})
-    _log(config.GOVORILKA_NICK, answer)
+        if with_morni and chain >= config.GOVORILKA_MAX_CHAIN * 2:
+            morni_until = 0.0
+        return last_reply_at, chain, morni_until
+    # кто-то начал говорить, пока мы решали, — не перебиваем, ждём до 6 секунд
+    wait_until = time.time() + 6
+    while listener.hearing and time.time() < wait_until:
+        time.sleep(0.1)
     listener.paused.set()
     try:
-        mouth.say(answer)
+        mouth.first_audio_at = 0.0
+        mouth.synth_stats.clear()
+        if named and not with_morni:
+            mouth.filler(mode)                          # «Ага» сразу, пока мозг думает
+        answer = reply_stream(history, mouth, mode, with_morni)
+        t_text = time.time() - t0
+        mouth.wait()
     finally:
         listener.paused.clear()
-    return time.time(), chain
+    if not answer:
+        return last_reply_at, chain, morni_until
+    history.append({"role": "assistant", "content": answer})
+    first = (mouth.first_audio_at - t0) if mouth.first_audio_at else -1
+    sound = sum(s for s, _ in mouth.synth_stats)
+    synth = sum(t for _, t in mouth.synth_stats)
+    _log(config.GOVORILKA_NICK, f"{answer}   [{mode}{', с Морни' if with_morni else ''}; текст {t_text:.1f} с, "
+                                f"первый звук через {first:.1f} с, синтез {synth:.1f} с на {sound:.1f} с речи]")
+    return time.time(), chain, morni_until
 
 
 if __name__ == "__main__":
