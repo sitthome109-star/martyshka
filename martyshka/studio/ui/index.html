@@ -351,6 +351,7 @@ textarea::placeholder{color:var(--dim)}
         <div class="field"><label>Голос (встроенный, не клон человека)</label><select id="gVoice"></select></div>
         <div class="field"><label>Мозг в Говорилке</label><select id="gModel"></select><small>Лёгкие модели отвечают быстрее — в живом разговоре это важно.</small></div>
         <label class="check"><input type="checkbox" id="gAuto"> Заходить в Говорилку самой при включении ПК</label>
+        <div style="margin:0 0 18px"><button class="btn pri" id="gSave">Сохранить</button><span class="saved" id="gSaved"></span></div>
         <div class="field"><label>Что там говорили</label><div class="code"><pre id="gLog" style="max-height:260px">…</pre></div></div>
       </div>
     </section>
@@ -634,20 +635,22 @@ $('#sSave').onclick=async()=>{ const r=await api().save_settings({STUDIO_TASK_BR
 
 // ---------- Говорилка ----------
 let govTimer=0;
-function fillGov(g){
-  $('#gNick').textContent=g.nick; $('#gStatus').textContent=(g.message?g.message+' ':'')+g.status;
+let govDirty=false;   // брат что-то поменял и ещё не нажал «Сохранить» — не перетираем его выбор при обновлении
+function fillGov(g,force){
+  $('#gNick').textContent=g.nick; $('#gStatus').textContent=g.status;
   $('#gCable').style.display=g.cable?'none':'block'; $('#gJoin').disabled=!g.cable; $('#gLeave').disabled=!g.running;
+  $('#gLog').textContent=g.log||'Пока тихо.';
+  if(govDirty && !force) return;
   $('#gVoice').innerHTML=Object.entries(g.speakers).map(([k,v])=>`<option value="${k}" ${k===g.speaker?'selected':''}>${esc(v)}</option>`).join('');
   $('#gModel').innerHTML=g.models.map(m=>`<option ${m===g.model?'selected':''}>${esc(m)}</option>`).join('');
-  $('#gAuto').checked=g.autostart; $('#gPersona').value=g.persona||'авто'; $('#gLog').textContent=g.log||'Пока тихо.'; }
-$('#gPersona').onchange=async e=>fillGov(await api().gov_action('persona',e.target.value));
-async function renderGov(){ fillGov(await api().gov_info()); clearInterval(govTimer);
+  $('#gAuto').checked=g.autostart; $('#gPersona').value=g.persona||'авто'; }
+async function renderGov(){ govDirty=false; fillGov(await api().gov_info(),true); clearInterval(govTimer);
   govTimer=setInterval(async()=>{ if($('#govorilka').classList.contains('on')) fillGov(await api().gov_info()); else clearInterval(govTimer); },4000); }
 $('#gJoin').onclick=async()=>fillGov(await api().gov_action('join'));
 $('#gLeave').onclick=async()=>fillGov(await api().gov_action('leave'));
-$('#gVoice').onchange=async e=>fillGov(await api().gov_action('voice',e.target.value));
-$('#gModel').onchange=async e=>fillGov(await api().gov_action('model',e.target.value));
-$('#gAuto').onchange=async e=>fillGov(await api().gov_action('autostart',e.target.checked));
+['#gPersona','#gVoice','#gModel','#gAuto'].forEach(s=>$(s).addEventListener('change',()=>{ govDirty=true; $('#gSaved').textContent='есть несохранённые изменения'; $('#gSaved').classList.add('show'); }));
+$('#gSave').onclick=async()=>{ const g=await api().gov_action('save',{persona:$('#gPersona').value, voice:$('#gVoice').value, model:$('#gModel').value, autostart:$('#gAuto').checked});
+  govDirty=false; fillGov(g,true); $('#gSaved').textContent=g.message+' ✓'; $('#gSaved').classList.add('show'); setTimeout(()=>$('#gSaved').classList.remove('show'),3500); };
 
 // ---------- старт ----------
 window.addEventListener('pywebviewready', async()=>{

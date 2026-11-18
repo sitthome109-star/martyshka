@@ -290,6 +290,22 @@ class Api:
         elif action == "model" and value:
             g.save_setting("GOVORILKA_MODEL", value)
             msg = f"Мозг: {value}"
+        elif action == "save" and isinstance(value, dict):
+            changed = []
+            if value.get("persona") in ("авто", "злая") and value["persona"] != config.GOVORILKA_PERSONA:
+                g.save_setting("GOVORILKA_PERSONA", value["persona"])
+                changed.append("характер")
+            if value.get("voice") in g.SPEAKERS and value["voice"] != config.GOVORILKA_SPEAKER:
+                g.save_setting("GOVORILKA_SPEAKER", value["voice"])
+                changed.append("голос")
+            if value.get("model") and value["model"] != g.brain_model():
+                g.save_setting("GOVORILKA_MODEL", value["model"])
+                changed.append("мозг")
+            if "autostart" in value and bool(value["autostart"]) != g.autostart_enabled():
+                g.set_autostart(bool(value["autostart"]))
+                changed.append("автозапуск")
+            msg = ("Сохранено: " + ", ".join(changed) + (" — Мартышка подхватит на ходу." if g.is_running() else "."))\
+                if changed else "Ничего не поменялось."
         elif action == "persona" and value in ("авто", "злая"):
             g.save_setting("GOVORILKA_PERSONA", value)
             msg = "Характер: злая" if value == "злая" else "Характер: вежливая"
