@@ -144,6 +144,14 @@ TOOLS = [
                     "martyshka/studio/studio.ico, если она есть), обновить ярлык на рабочем столе и перезапустить "
                     "Студию ПОСЛЕ ответа брату. Вызывай последним шагом, когда правила свои файлы.",
      "input_schema": _schema({"restart": {"type": "boolean"}}, ["restart"])},
+    {"name": "govorilka", "group": "pc",
+     "description": "Голосовой сервер «Говорилка» брата: action=join — Мартышка заходит туда отдельным участником "
+                    "«Мартышка (ИИ)» и общается голосом с людьми и ИИ Морни; leave — выйти; status — сидит ли там; "
+                    "log — что там недавно говорили и что она отвечала; set_voice — сменить голос (value: ryan, aiden, "
+                    "eric, dylan, uncle_fu, serena, vivian, ono_anna, sohee); set_model — сменить мозг (value: имя "
+                    "модели Ollama).",
+     "input_schema": _schema({"action": {"type": "string", "enum": ["join", "leave", "status", "log", "set_voice",
+                                                                    "set_model"]}, "value": S}, ["action"])},
     {"name": "remember", "group": "memory",
      "description": "Запомнить надолго полезный факт: где лежит проект, как брат любит, какие программы у него "
                     "есть. Коротко, одной фразой.",
@@ -151,7 +159,7 @@ TOOLS = [
 ]
 TOOL_GROUP = {t["name"]: t["group"] for t in TOOLS}
 CHAT_TOOL_NAMES = ("web_search", "web_fetch", "open_app", "open_settings", "draw_image", "open_path",
-                   "martyshka_action", "remember", "windows")
+                   "martyshka_action", "remember", "windows", "govorilka")
 
 
 def active_tools(names: tuple[str, ...] | None = None) -> list[dict]:
@@ -179,6 +187,7 @@ ACTIVITY = {
     "type_text": ("write", "Печатаю"), "draw_image": ("draw", "Рисую"), "open_path": ("exec", "Открываю"),
     "martyshka_action": ("exec", "Делаю"), "remember": ("memory", "Запоминаю"),
     "make_icon": ("draw", "Делаю иконку"), "update_app": ("exec", "Обновляю Студию"),
+    "govorilka": ("exec", "Говорилка"),
 }
 
 
@@ -502,5 +511,29 @@ def _run(name: str, args: dict, ctx: dict) -> dict:
 
     if name == "remember":
         return {"text": _remember(args["fact"]), "ok": True}
+
+    if name == "govorilka":
+        from .. import govorilka
+        act = args["action"]
+        if act == "join":
+            text = govorilka.start()
+            return {"text": text, "ok": text.startswith(("Захожу", "Мартышка уже"))}
+        if act == "leave":
+            return {"text": govorilka.stop(), "ok": True}
+        if act == "log":
+            return {"text": govorilka.recent_log(25) or "Пока ничего не слышала.", "ok": True}
+        if act == "set_voice":
+            sp = govorilka.find_speaker(args.get("value", ""))
+            if not sp:
+                return {"text": "Нет такого голоса. Есть: " + ", ".join(govorilka.SPEAKERS), "ok": False}
+            govorilka.save_setting("GOVORILKA_SPEAKER", sp)
+            return {"text": f"Голос в Говорилке: {govorilka.SPEAKERS[sp]}", "ok": True}
+        if act == "set_model":
+            m = govorilka.find_model(args.get("value", ""))
+            if not m:
+                return {"text": "Нет такой модели. Есть: " + ", ".join(govorilka.chat_models()), "ok": False}
+            govorilka.save_setting("GOVORILKA_MODEL", m)
+            return {"text": f"Мозг в Говорилке: {m}", "ok": True}
+        return {"text": govorilka.status(), "ok": True}
 
     return {"text": f"Нет такого инструмента: {name}", "ok": False}

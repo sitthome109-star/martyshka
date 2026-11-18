@@ -175,6 +175,26 @@ STUDIO_CLOSE_TO_ORB = True           # крестик прячет окно в �
 # Папка, где агент свободно создаёт файлы и проекты
 STUDIO_WORKSPACE = Path.home() / "Documents" / "Проекты Мартышки"
 
+# ---------- ГОВОРИЛКА (Мартышка сидит на голосовом сервере как отдельный участник) ----------
+GOVORILKA_EXE = Path.home() / "Desktop" / "govorilka.exe"
+GOVORILKA_NICK = "Мартышка (ИИ)"
+# Голос на сервере — встроенный голос Qwen3-TTS (НЕ клон человека): ryan, aiden, eric, dylan…
+GOVORILKA_SPEAKER = "ryan"
+# Куда вторая копия Говорилки выводит звук сервера (Мартышка записывает его «петлёй»). Лучше устройство,
+# в которое ничего не воткнуто, иначе брат услышит сервер дважды.
+GOVORILKA_LISTEN_DEVICE = "Динамики (HyperX QuadCast)"
+# Виртуальный кабель VB-CABLE: Мартышка говорит в CABLE Input, её Говорилка слушает CABLE Output как микрофон
+GOVORILKA_CABLE_PLAY = "CABLE Input"
+GOVORILKA_CABLE_MIC = "CABLE Output (VB-Audio Virtual Cable)"
+# Каким мозгом думать в Говорилке ("" — тем же, что и обычная Мартышка, MODEL)
+GOVORILKA_MODEL = ""
+# Заходить в Говорилку самой при включении ПК
+GOVORILKA_AUTOSTART = True
+# Сколько секунд после своего ответа отвечать без имени (идёт разговор)
+GOVORILKA_FOLLOWUP = 20
+# Сколько раз подряд можно ответить без имени (чтобы два ИИ не болтали друг с другом вечно)
+GOVORILKA_MAX_CHAIN = 6
+
 # Своими словами — что добавить к характеру Мартышки (из окна настроек)
 PERSONALITY_EXTRA = ""
 

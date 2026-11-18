@@ -30,7 +30,7 @@ TASK_RE = re.compile(
     r"(напиш|сдела|созда|найди|поищ|загугл|узна[йть]|погод|курс|новост|цен[аы]|сколько стоит|последн|свеж|"
     r"сегодня|202\d|нарису|картинк|фото|изображ|видео|открой|запусти|установи|исправ|почин|провер|посчита|"
     r"переведи|файл|папк|документ|таблиц|excel|настройк|громкост|включи|выключи|закрой|экран|окн[оа]|"
-    r"напомни|запомни|передела|измени|поменя|добав|убер|улучш|настро|"
+    r"напомни|запомни|передела|измени|поменя|добав|убер|улучш|настро|говорилк|зайди|выйди|"
     r"search|find|open|weather|news|draw|install|such|finde|öffne|wetter)", re.IGNORECASE)
 CODE_RE = re.compile(
     r"(напрограмм|запрограмм|программ|код|скрипт|сайт|прилож|игр[ауыо]|\bбот|парсер|функци|алгоритм|"
@@ -226,6 +226,24 @@ class Chat:
 
     # ---------- главное ----------
     def run(self, text: str, mode: str, emit, ask, should_stop) -> None:
+        # Команды для Говорилки («зайди в войс», «выйди с войса», «смени голос…») — сразу, без мозга
+        try:
+            from .. import govorilka
+            fast = govorilka.handle_command(text)
+        except Exception as e:
+            fast = f"С Говорилкой что-то не так: {e}"
+        if fast:
+            if self.title == "Новый чат":
+                self.title = _summary(text.replace("\n", " "), 48)
+            emit({"type": "status", "kind": "chat", "brain": "команда Говорилки", "super": False, "title": self.title})
+            self.history += [{"role": "user", "text": text}, {"role": "assistant", "text": fast, "tool_calls": []}]
+            self.display += [{"type": "user", "text": text}, {"type": "assistant", "text": fast}]
+            emit({"type": "assistant_start"})
+            emit({"type": "text", "text": fast})
+            self.save()
+            emit({"type": "done"})
+            return
+
         kind = {"chat": "chat", "task": "code"}.get(mode) or classify(text)
         brain = (brains.code_brain() if kind == "code" else
                  brains.task_brain() if kind == "task" else brains.chat_brain())

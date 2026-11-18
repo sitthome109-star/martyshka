@@ -267,6 +267,33 @@ class Api:
                          creationflags=0x08000000)
         return {"ok": True}
 
+    # ---------- Говорилка ----------
+    def gov_info(self) -> dict:
+        from .. import govorilka as g
+        g._reload_settings()
+        return {"status": g.status(), "running": g.is_running(), "cable": g.cable_ready(),
+                "speaker": config.GOVORILKA_SPEAKER, "speakers": g.SPEAKERS, "model": g.brain_model(),
+                "models": g.chat_models(), "autostart": g.autostart_enabled(), "nick": config.GOVORILKA_NICK,
+                "log": g.recent_log(30)}
+
+    def gov_action(self, action: str, value=None) -> dict:
+        from .. import govorilka as g
+        msg = ""
+        if action == "join":
+            msg = g.start()
+        elif action == "leave":
+            msg = g.stop()
+        elif action == "voice" and value in g.SPEAKERS:
+            g.save_setting("GOVORILKA_SPEAKER", value)
+            msg = f"Голос: {g.SPEAKERS[value]}"
+        elif action == "model" and value:
+            g.save_setting("GOVORILKA_MODEL", value)
+            msg = f"Мозг: {value}"
+        elif action == "autostart":
+            g.set_autostart(bool(value))
+            msg = "Буду заходить сама при включении ПК." if value else "Сама заходить не буду."
+        return dict(self.gov_info(), message=msg)
+
     def forget_fact(self, fact: str) -> list:
         facts = [f for f in tools.memory_facts() if f != fact]
         tools.MEMORY_FILE.write_text(json.dumps(facts, ensure_ascii=False, indent=1), encoding="utf-8")

@@ -268,6 +268,7 @@ textarea::placeholder{color:var(--dim)}
       <button class="tab" data-v="chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Чат</button>
       <button class="tab" data-v="brains"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4"/></svg>Мозги</button>
       <button class="tab" data-v="connectors"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5M3 17l9 5 9-5"/></svg>Коннекторы</button>
+      <button class="tab" data-v="govorilka"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1v-6h3zM3 19a2 2 0 0 0 2 2h1v-6H3z"/></svg>Говорилка</button>
       <button class="tab" data-v="memory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0-6 6c0 2 1 3.5 2 4.5V17h8v-3.5c1-1 2-2.5 2-4.5a6 6 0 0 0-6-6zM9 21h6"/></svg>Память</button>
       <button class="tab" data-v="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>Настройки</button>
     </div>
@@ -337,6 +338,20 @@ textarea::placeholder{color:var(--dim)}
     <section class="view page" id="connectors">
       <h2>Коннекторы</h2><p class="sub">Что агенту можно делать. Выключенное он просто не увидит.</p>
       <div class="grid" id="connCards"></div>
+    </section>
+
+    <!-- ГОВОРИЛКА -->
+    <section class="view page" id="govorilka">
+      <h2>Говорилка</h2><p class="sub">Мартышка сидит на голосовом сервере отдельным участником и болтает с людьми и Морни. В чате можно писать «зайди в войс» / «выйди с войса».</p>
+      <div class="form">
+        <div class="bc" style="margin-bottom:16px"><div class="tag" id="gNick"></div><h3 id="gStatus">…</h3>
+          <div style="display:flex;gap:10px;margin-top:12px"><button class="btn pri" id="gJoin">Зайти в войс</button><button class="btn" id="gLeave">Выйти с войса</button></div>
+          <div class="note" id="gCable" style="display:none;margin:14px 0 0">Нужен виртуальный кабель <b>VB-CABLE</b> (vb-audio.com): скачай, распакуй, запусти <b>VBCABLE_Setup_x64.exe</b> от имени администратора → Install Driver → перезагрузи ПК.</div></div>
+        <div class="field"><label>Голос (встроенный, не клон человека)</label><select id="gVoice"></select></div>
+        <div class="field"><label>Мозг в Говорилке</label><select id="gModel"></select><small>Лёгкие модели отвечают быстрее — в живом разговоре это важно.</small></div>
+        <label class="check"><input type="checkbox" id="gAuto"> Заходить в Говорилку самой при включении ПК</label>
+        <div class="field"><label>Что там говорили</label><div class="code"><pre id="gLog" style="max-height:260px">…</pre></div></div>
+      </div>
     </section>
 
     <!-- ПАМЯТЬ -->
@@ -436,6 +451,7 @@ function md(src){
 // ---------- вкладки ----------
 function show(v){ document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.v===v));
   document.querySelectorAll('.view').forEach(x=>x.classList.toggle('on',x.id===v));
+  if(v==='govorilka') renderGov();
   if(v==='brains') renderBrains(); if(v==='connectors') renderConnectors(); if(v==='memory') renderMemory(); if(v==='settings') loadSettings();
   if(v==='chat') setTimeout(()=>input.focus(),50); }
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>show(t.dataset.v));
@@ -614,6 +630,22 @@ $('#sSave').onclick=async()=>{ const r=await api().save_settings({STUDIO_TASK_BR
   STUDIO_LOCAL_AGENT_MODEL:$('#s_local').value.trim(), STUDIO_CLAUDE_KEY:$('#s_key').value.trim(), STUDIO_OLLAMA_CLOUD_MODEL:$('#s_ocloud').value.trim(),
   STUDIO_CLOSE_TO_ORB:$('#s_orb').checked, STUDIO_AUTO_COMMANDS:$('#s_auto').checked});
   if(r&&r.brains){ setBrain('Готова · '+r.brains.chat,false); homeBrains(r.brains); } $('#savedNote').classList.add('show'); setTimeout(()=>$('#savedNote').classList.remove('show'),1800); };
+
+// ---------- Говорилка ----------
+let govTimer=0;
+function fillGov(g){
+  $('#gNick').textContent=g.nick; $('#gStatus').textContent=(g.message?g.message+' ':'')+g.status;
+  $('#gCable').style.display=g.cable?'none':'block'; $('#gJoin').disabled=!g.cable||g.running; $('#gLeave').disabled=!g.running;
+  $('#gVoice').innerHTML=Object.entries(g.speakers).map(([k,v])=>`<option value="${k}" ${k===g.speaker?'selected':''}>${esc(v)}</option>`).join('');
+  $('#gModel').innerHTML=g.models.map(m=>`<option ${m===g.model?'selected':''}>${esc(m)}</option>`).join('');
+  $('#gAuto').checked=g.autostart; $('#gLog').textContent=g.log||'Пока тихо.'; }
+async function renderGov(){ fillGov(await api().gov_info()); clearInterval(govTimer);
+  govTimer=setInterval(async()=>{ if($('#govorilka').classList.contains('on')) fillGov(await api().gov_info()); else clearInterval(govTimer); },4000); }
+$('#gJoin').onclick=async()=>fillGov(await api().gov_action('join'));
+$('#gLeave').onclick=async()=>fillGov(await api().gov_action('leave'));
+$('#gVoice').onchange=async e=>fillGov(await api().gov_action('voice',e.target.value));
+$('#gModel').onchange=async e=>fillGov(await api().gov_action('model',e.target.value));
+$('#gAuto').onchange=async e=>fillGov(await api().gov_action('autostart',e.target.checked));
 
 // ---------- старт ----------
 window.addEventListener('pywebviewready', async()=>{
