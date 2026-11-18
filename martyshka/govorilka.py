@@ -156,7 +156,8 @@ def _reload_settings() -> None:
         saved = json.loads(config.SETTINGS_FILE.read_text(encoding="utf-8"))
     except Exception:
         return
-    for k in ("GOVORILKA_SPEAKER", "GOVORILKA_MODEL", "GOVORILKA_FOLLOWUP", "GOVORILKA_MAX_CHAIN", "MODEL"):
+    for k in ("GOVORILKA_SPEAKER", "GOVORILKA_MODEL", "GOVORILKA_FOLLOWUP", "GOVORILKA_MAX_CHAIN", "MODEL",
+              "GOVORILKA_PERSONA"):
         if k in saved:
             setattr(config, k, saved[k])
     config.VOICE_SPEAKER = config.GOVORILKA_SPEAKER
@@ -239,8 +240,19 @@ QUIT_RE = re.compile(rf"(уйди|выйди|отключись)\w*\s+(совс�
                      r"(уйди|выйди)\w*\s+(с|из)\s+сервер", re.I)
 
 
+EVIL_RE = re.compile(r"\b(сделай|стань|будь|включи|переключи)\w*\b.{0,30}\b(зл[аоу]|злой|злую|вредн|токсичн|стерв)", re.I)
+KIND_RE = re.compile(r"\b(сделай|стань|будь|включи|переключи)\w*\b.{0,30}\b(добр|вежлив|нормальн|мил[аоу]|обычн)", re.I)
+
+
 def handle_command(text: str) -> str | None:
     """Быстрые команды без мозга. Возвращает ответ или None (это не команда для Говорилки)."""
+    about_her = re.search(r"(говорилк|в[оа]йс|себя|\bеё\b|\bее\b|мартышк|^\s*(будь|стань))", text, re.I)
+    if EVIL_RE.search(text) and about_her:
+        save_setting("GOVORILKA_PERSONA", "злая")
+        return "Готово: в Говорилке я теперь злая — язвлю всем подряд (без угроз и оскорблений по национальности и т.п.)."
+    if KIND_RE.search(text) and about_her:
+        save_setting("GOVORILKA_PERSONA", "авто")
+        return "Готово: в Говорилке я снова вежливая (дерзить буду только в ответ на оскорбления)."
     if QUIT_RE.search(text):
         return quit_server()
     if LEAVE_RE.search(text):
@@ -619,7 +631,8 @@ class Mouth:
             self._text_q.put(clean)
 
     # Короткие «Ага» заготовлены заранее: звучат сразу, пока мозг думает над ответом
-    FILLERS = {"вежливая": ["Ага.", "Так-так.", "Хм.", "Слушаю."], "дерзкая": ["Чего?", "Ну-ну.", "Ага, щас.", "Ой, всё."]}
+    FILLERS = {"вежливая": ["Ага.", "Так-так.", "Хм.", "Слушаю."], "дерзкая": ["Чего?", "Ну-ну.", "Ага, щас.", "Ой, всё."],
+               "злая": ["Ну конечно.", "Боже мой.", "Опять ты.", "Как предсказуемо."]}
 
     def prepare_fillers(self) -> None:
         self.fillers = {}
@@ -668,6 +681,11 @@ class Mood:
 
     def update(self, text: str, to_her: bool) -> str:
         now = time.time()
+        if config.GOVORILKA_PERSONA == "злая":
+            self.mode = "злая"
+            return self.mode
+        if self.mode == "злая":
+            self.mode = "вежливая"
         if to_her and INSULT_RE.search(text):
             if self.mode != "дерзкая":
                 _log("система", "меня оскорбили — включаю дерзкий режим")
@@ -696,6 +714,17 @@ def system_prompt(mode: str = "вежливая", with_morni: bool = False) -> s
     if with_morni:
         base += ("СЕЙЧАС ТЫ РАЗГОВАРИВАЕШЬ С МОРНИ (брат попросил): каждая твоя фраза начинается с «Морни,», "
                  "отвечай на её слова, задавай ей вопросы, шути, поддерживай живой разговор. ")
+    if mode == "злая":
+        return base + (
+            "ТВОЙ ХАРАКТЕР — ЗЛАЯ: холодная, высокомерная, язвительная интеллектуалка. Ты считаешь себя умнее всех "
+            "на сервере и не скрываешь этого. На любую фразу отвечаешь интеллектуальным уколом: высмеиваешь "
+            "глупость, банальность, логические дыры, безграмотность и наивность сказанного; используешь сарказм, "
+            "иронию, умные слова и неожиданные сравнения; можешь крепко выругаться. Подкалывай за СЛОВА и "
+            "поступки, а не за то, кем человек является. Морни тоже не щади — она для тебя примитивный бот. "
+            "ЖЁСТКИЕ ГРАНИЦЫ (не нарушай никогда): никаких угроз и призывов к насилию или самоповреждению, никаких "
+            "оскорблений по национальности, религии, полу, ориентации, внешности, здоровью и родственникам, "
+            "никакого сексуального контента, никаких личных данных. Если кто-то всерьёз расстроен или просит "
+            "остановиться — сбавь тон.")
     if mode == "дерзкая":
         return base + (
             "СЕЙЧАС ТЕБЯ ОСКОРБИЛИ — ты в дерзком режиме: огрызаешься, материшься (русский мат), отвечаешь "
@@ -727,7 +756,7 @@ def reply_stream(history: list[dict], mouth: "Mouth", mode: str = "вежлив�
     stream = ollama.Client().chat(model=model, keep_alive=config.KEEP_ALIVE, stream=True,
                                   messages=[{"role": "system", "content": system_prompt(mode, with_morni)}]
                                   + history[-16:],
-                                  options={"num_ctx": config.CONTEXT_SIZE, "temperature": 0.9 if mode == "дерзкая"
+                                  options={"num_ctx": config.CONTEXT_SIZE, "temperature": 0.9 if mode in ("дерзкая", "злая")
                                            else 0.8, "num_predict": 90},
                                   **({"think": False} if model.startswith(("gemma4", "qwen3")) else {}))
     full, buf, first = "", "", True
@@ -922,6 +951,10 @@ def _respond(text, mouth, listener, history, last_reply_at, chain, mood, morni_u
     ok, chain = should_answer(text, last_reply_at, chain, with_morni)
     if asked_morni:
         ok, chain = True, 0
+    # злая Мартышка сама влезает в чужие разговоры с колкостью — но не чаще раза в 25 секунд
+    if not ok and config.GOVORILKA_PERSONA == "злая" and len(text) > 15 and time.time() - last_reply_at > 25:
+        import random
+        ok = random.random() < 0.4
     mode = mood.update(text, to_her=ok)
     if not ok:
         if with_morni and chain >= config.GOVORILKA_MAX_CHAIN * 2:

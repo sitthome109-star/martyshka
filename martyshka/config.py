@@ -186,6 +186,8 @@ GOVORILKA_LISTEN_DEVICE = "Динамики (HyperX QuadCast)"
 # Виртуальный кабель VB-CABLE: Мартышка говорит в CABLE Input, её Говорилка слушает CABLE Output как микрофон
 GOVORILKA_CABLE_PLAY = "CABLE Input"
 GOVORILKA_CABLE_MIC = "CABLE Output (VB-Audio Virtual Cable)"
+# Характер в Говорилке: "авто" (вежливая, дерзит только в ответ на оскорбления) или "злая" (язвит всем всегда)
+GOVORILKA_PERSONA = "авто"
 # Каким мозгом думать в Говорилке ("" — тем же, что и обычная Мартышка, MODEL)
 GOVORILKA_MODEL = ""
 # Заходить в Говорилку самой при включении ПК

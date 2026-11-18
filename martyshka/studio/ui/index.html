@@ -347,6 +347,7 @@ textarea::placeholder{color:var(--dim)}
         <div class="bc" style="margin-bottom:16px"><div class="tag" id="gNick"></div><h3 id="gStatus">…</h3>
           <div style="display:flex;gap:10px;margin-top:12px"><button class="btn pri" id="gJoin">Зайти в войс</button><button class="btn" id="gLeave">Выйти с войса</button></div>
           <div class="note" id="gCable" style="display:none;margin:14px 0 0">Нужен виртуальный кабель <b>VB-CABLE</b> (vb-audio.com): скачай, распакуй, запусти <b>VBCABLE_Setup_x64.exe</b> от имени администратора → Install Driver → перезагрузи ПК.</div></div>
+        <div class="field"><label>Характер</label><select id="gPersona"><option value="авто">Вежливая (дерзит только в ответ на оскорбления)</option><option value="злая">Злая (язвит всем и всегда)</option></select></div>
         <div class="field"><label>Голос (встроенный, не клон человека)</label><select id="gVoice"></select></div>
         <div class="field"><label>Мозг в Говорилке</label><select id="gModel"></select><small>Лёгкие модели отвечают быстрее — в живом разговоре это важно.</small></div>
         <label class="check"><input type="checkbox" id="gAuto"> Заходить в Говорилку самой при включении ПК</label>
@@ -638,7 +639,8 @@ function fillGov(g){
   $('#gCable').style.display=g.cable?'none':'block'; $('#gJoin').disabled=!g.cable; $('#gLeave').disabled=!g.running;
   $('#gVoice').innerHTML=Object.entries(g.speakers).map(([k,v])=>`<option value="${k}" ${k===g.speaker?'selected':''}>${esc(v)}</option>`).join('');
   $('#gModel').innerHTML=g.models.map(m=>`<option ${m===g.model?'selected':''}>${esc(m)}</option>`).join('');
-  $('#gAuto').checked=g.autostart; $('#gLog').textContent=g.log||'Пока тихо.'; }
+  $('#gAuto').checked=g.autostart; $('#gPersona').value=g.persona||'авто'; $('#gLog').textContent=g.log||'Пока тихо.'; }
+$('#gPersona').onchange=async e=>fillGov(await api().gov_action('persona',e.target.value));
 async function renderGov(){ fillGov(await api().gov_info()); clearInterval(govTimer);
   govTimer=setInterval(async()=>{ if($('#govorilka').classList.contains('on')) fillGov(await api().gov_info()); else clearInterval(govTimer); },4000); }
 $('#gJoin').onclick=async()=>fillGov(await api().gov_action('join'));

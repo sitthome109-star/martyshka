@@ -274,6 +274,7 @@ class Api:
         return {"status": g.status(), "running": g.is_running(), "cable": g.cable_ready(),
                 "speaker": config.GOVORILKA_SPEAKER, "speakers": g.SPEAKERS, "model": g.brain_model(),
                 "models": g.chat_models(), "autostart": g.autostart_enabled(), "nick": config.GOVORILKA_NICK,
+                "persona": config.GOVORILKA_PERSONA,
                 "log": g.recent_log(30)}
 
     def gov_action(self, action: str, value=None) -> dict:
@@ -289,6 +290,9 @@ class Api:
         elif action == "model" and value:
             g.save_setting("GOVORILKA_MODEL", value)
             msg = f"Мозг: {value}"
+        elif action == "persona" and value in ("авто", "злая"):
+            g.save_setting("GOVORILKA_PERSONA", value)
+            msg = "Характер: злая" if value == "злая" else "Характер: вежливая"
         elif action == "autostart":
             g.set_autostart(bool(value))
             msg = "Буду заходить сама при включении ПК." if value else "Сама заходить не буду."
