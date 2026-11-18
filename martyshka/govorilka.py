@@ -572,6 +572,42 @@ class Listener:
                         speech, silence, heard = [], 0.0, False
 
 
+# ---------- эмоции в голосе ----------
+# Мозг ставит метку в начале фразы: «[насмешка] Ну ты и гений.» Голос произносит её с этой эмоцией
+# (подсказка instruct для Qwen3-TTS), а для смеха ещё и добавляет сам смех.
+EMOTIONS = {
+    "смех": ("Laugh out loud genuinely while speaking, amused and delighted.", "Ха-ха-ха! "),
+    "фальшивый смех": ("Fake, slow, exaggerated sarcastic laugh, clearly mocking, then speak dryly.", "Ха. Ха. Ха. "),
+    "насмешка": ("Mocking, teasing, condescending tone with a smirk, slightly drawn out words.", "Пф-ф. "),
+    "презрение": ("Cold, contemptuous, disgusted and arrogant tone, slow and deliberate.", ""),
+    "злость": ("Angry, irritated, sharp and loud tone, emphatic.", ""),
+    "вздох": ("Tired exasperated sigh, bored and annoyed, as if talking to an idiot.", "Эх… "),
+    "удивление": ("Surprised, astonished tone, rising intonation.", "О-о! "),
+    "радость": ("Happy, cheerful, energetic and warm tone.", ""),
+    "скука": ("Bored, monotone, indifferent and sleepy tone.", ""),
+    "издёвка": ("Theatrical, exaggerated mock-sweet tone, dripping with sarcasm.", ""),
+}
+MOOD_VOICE = {
+    "злая": "Cold, arrogant, sarcastic and contemptuous tone, like a bored genius talking to fools.",
+    "дерзкая": "Irritated, cheeky and sassy tone.",
+    "вежливая": "Friendly, warm and lively tone.",
+}
+TAG_RE = re.compile(r"^\s*\[([а-яё ]{3,20})\]\s*", re.I)
+
+
+def split_emotion(sentence: str) -> tuple[str, str | None, str]:
+    """«[смех] Текст» → (текст для голоса, подсказка instruct или None, название эмоции)."""
+    m = TAG_RE.match(sentence)
+    if not m:
+        return sentence, None, ""
+    name = m.group(1).strip().lower().replace("e", "е")
+    rest = sentence[m.end():]
+    if name in EMOTIONS:
+        instruct, sound = EMOTIONS[name]
+        return sound + rest, instruct, name
+    return rest, None, ""
+
+
 # ---------- голос ----------
 class Mouth:
     """Встроенный голос Qwen3-TTS → виртуальный кабель (= микрофон Мартышкиной Говорилки).
@@ -599,12 +635,23 @@ class Mouth:
         threading.Thread(target=self._synth_loop, daemon=True).start()
         threading.Thread(target=self._play_loop, daemon=True).start()
 
+    def _synth(self, text: str, instruct: str | None):
+        """Синтез с эмоцией (instruct); если движок её не принял — обычным голосом."""
+        if instruct:
+            try:
+                return [np.asarray(c, dtype=np.float32).reshape(-1) for c, _sr, _ in
+                        self.engine.tts.generate_custom_voice_streaming(
+                            text=text, speaker=config.VOICE_SPEAKER, language="russian", instruct=instruct)]
+            except Exception as e:
+                _log("ошибка", f"эмоция не вышла: {e}")
+        return list(self.engine.synthesize(text))
+
     def _synth_loop(self) -> None:
         while True:
-            text = self._text_q.get()
+            text, instruct = self._text_q.get()
             try:
                 t0 = time.time()
-                pieces = list(self.engine.synthesize(text))
+                pieces = self._synth(text, instruct)
                 if pieces:
                     audio = np.concatenate(pieces).astype(np.float32)
                     self.synth_stats.append((len(audio) / self.sr, time.time() - t0))
@@ -625,10 +672,17 @@ class Mouth:
             finally:
                 self._audio_q.task_done()
 
+    mood_voice: str | None = None        # тон по умолчанию (по настроению), если у фразы нет своей эмоции
+    current_instruct: str | None = None  # эмоция текущего ответа — держится до конца ответа
+
     def queue(self, sentence: str) -> None:
-        clean = self.prepare(sentence, "ru")
+        text, instruct, _ = split_emotion(sentence)
+        if instruct:
+            self.current_instruct = instruct.replace("laugh", "amused").replace("Laugh", "Amused") \
+                if "laugh" in instruct.lower() else instruct     # смеёмся один раз, дальше — тот же настрой
+        clean = self.prepare(text, "ru")
         if re.search(r"\w", clean):
-            self._text_q.put(clean)
+            self._text_q.put((clean, instruct or self.current_instruct or self.mood_voice))
 
     # Короткие «Ага» заготовлены заранее: звучат сразу, пока мозг думает над ответом
     FILLERS = {"вежливая": ["Ага.", "Так-так.", "Хм.", "Слушаю."], "дерзкая": ["Чего?", "Ну-ну.", "Ага, щас.", "Ой, всё."],
@@ -646,6 +700,7 @@ class Mouth:
 
     def filler(self, mood: str) -> None:
         import random
+        self.mood_voice = MOOD_VOICE.get(mood)
         options = getattr(self, "fillers", {}).get(mood) or []
         if options:
             self._audio_q.put(random.choice(options).astype(np.float32))
@@ -710,7 +765,11 @@ def system_prompt(mode: str = "вежливая", with_morni: bool = False) -> s
             "ОДНО короткое предложение (максимум два), без списков, без markdown, без смайликов и эмодзи, на том "
             "языке, на котором к тебе обратились. Не повторяй одно и то же. Не обсуждай личные данные брата. "
             "Морни — бот, она слышит только фразы, которые НАЧИНАЮТСЯ с её имени: если обращаешься к Морни — "
-            "ВСЕГДА начинай фразу со слов «Морни,». К людям обращайся как обычно. ")
+            "ВСЕГДА начинай фразу со слов «Морни,». К людям обращайся как обычно. "
+            "ЭМОЦИИ: твой голос умеет эмоции. Ставь в САМОМ НАЧАЛЕ ответа метку в квадратных скобках, подходящую "
+            "к ситуации: [смех], [фальшивый смех], [насмешка], [издёвка], [презрение], [злость], [вздох], "
+            "[удивление], [радость], [скука]. Например: «[фальшивый смех] Гениально, просто гениально.» "
+            "Метка — только одна и только в начале, слова «смех» и т.п. в тексте не пиши. ")
     if with_morni:
         base += ("СЕЙЧАС ТЫ РАЗГОВАРИВАЕШЬ С МОРНИ (брат попросил): каждая твоя фраза начинается с «Морни,», "
                  "отвечай на её слова, задавай ей вопросы, шути, поддерживай живой разговор. ")
@@ -758,8 +817,11 @@ def reply_stream(history: list[dict], mouth: "Mouth", mode: str = "вежлив�
     real_queue = mouth.queue
 
     def say_piece(s: str) -> None:
-        if with_morni and not sent_first["done"] and not MORNI_RE.match(s.strip()):
-            s = "Морни, " + s[:1].lower() + s[1:]
+        if with_morni and not sent_first["done"]:
+            tag = TAG_RE.match(s)
+            head, body = (s[:tag.end()], s[tag.end():]) if tag else ("", s.strip())
+            if not MORNI_RE.match(body):
+                s = f"{head}Морни, " + body[:1].lower() + body[1:]
         sent_first["done"] = True
         real_queue(s)
     stream = ollama.Client().chat(model=model, keep_alive=config.KEEP_ALIVE, stream=True,
@@ -785,7 +847,7 @@ def reply_stream(history: list[dict], mouth: "Mouth", mode: str = "вежлив�
     if buf.strip():
         say_piece(buf)
     full = re.sub(r"\s+", " ", full).strip()
-    if with_morni and full and not MORNI_RE.match(full):
+    if with_morni and full and not MORNI_RE.match(TAG_RE.sub("", full)):
         full = "Морни, " + full
     return full
 
@@ -977,6 +1039,8 @@ def _respond(text, mouth, listener, history, last_reply_at, chain, mood, morni_u
     try:
         mouth.first_audio_at = 0.0
         mouth.synth_stats.clear()
+        mouth.mood_voice = MOOD_VOICE.get(mode)
+        mouth.current_instruct = None
         if named and not with_morni:
             mouth.filler(mode)                          # «Ага» сразу, пока мозг думает
         answer = reply_stream(history, mouth, mode, with_morni)
