@@ -527,8 +527,8 @@ function onEvent(e){
     case 'tool_end': { const el=document.getElementById('t_'+e.id); if(el) finishTool(el,e); break; }
     case 'plan': renderPlan(e.items); break;
     case 'confirm': openConfirm(e); break;
-    case 'error': addError(e.text); break;
-    case 'done': closeSeg(); closeThink(); hideLive(); setBusy(false); refreshChats(); break;
+    case 'error': if(switchEl){switchEl.classList.remove('load');switchEl=null} addError(e.text); break;
+    case 'done': if(switchEl){switchEl.classList.remove('load');switchEl=null} closeSeg(); closeThink(); hideLive(); setBusy(false); refreshChats(); break;
   }
 }
 

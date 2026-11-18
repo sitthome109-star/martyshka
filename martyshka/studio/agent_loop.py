@@ -261,6 +261,17 @@ class Chat:
                                  on_text=lambda t: emit({"type": "text", "text": t}),
                                  should_stop=should_stop,
                                  on_progress=lambda t: emit({"type": "progress", "text": t}))
+                if res.gpu_crash:
+                    # супер-мозг не загрузился даже частично — не бросаем задачу, доделываем мозгом попроще
+                    brains.unload(brain.model)
+                    brain = brains.LocalBrain(brains.local_tool_model())
+                    emit({"type": "switch", "text": f"Супер-мозгу не хватило видеопамяти — продолжаю на "
+                                                    f"{brain.model}. Закрой игры или голосовую Мартышку, чтобы "
+                                                    f"в следующий раз он влез"})
+                    emit({"type": "status", "kind": kind, "brain": brain.label, "super": False,
+                          "title": self.title})
+                    system = system.replace("⚡ супер-мозг ", "")
+                    continue
                 if res.text or res.tool_calls or res.claude_raw:
                     self.history.append({"role": "assistant", "text": res.text, "tool_calls": res.tool_calls,
                                          "claude_raw": res.claude_raw})

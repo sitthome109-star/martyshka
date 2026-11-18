@@ -14,6 +14,9 @@
 from __future__ import annotations
 
 import json
+import re
+import subprocess
+import time
 import uuid
 from dataclasses import dataclass, field
 
@@ -27,6 +30,7 @@ class StepResult:
     claude_raw: list | None = None
     stop: str = "end"          # end | tools | max_tokens | refusal | error
     error: str = ""
+    gpu_crash: bool = False    # супер-мозг так и не влез в видеокарту
 
 
 # ---------- какие модели есть и что умеют ----------
@@ -55,6 +59,29 @@ def loaded_models() -> list[str]:
         return [m.model for m in ollama.Client().ps().models]
     except Exception:
         return []
+
+
+def free_vram_mb() -> int:
+    """Сколько видеопамяти свободно прямо сейчас (МБ). Не вышло узнать — считаем, что мало."""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=5, creationflags=0x08000000).stdout
+        return int(out.strip().splitlines()[0])
+    except Exception:
+        return 4000
+
+
+SUPER_LAYERS = 40          # слоёв у qwen3.6:35b-a3b
+SUPER_LAYER_MB = 560       # примерно столько видеопамяти на один слой (22 ГБ / 40)
+SUPER_RESERVE_MB = 2600    # кэш на 32K, рабочие буферы и сама CUDA — с запасом
+
+
+def super_gpu_layers(free_mb: int) -> int:
+    return max(0, min(SUPER_LAYERS, (free_mb - SUPER_RESERVE_MB) // SUPER_LAYER_MB))
+
+
+def _gpu_crash(err: str) -> bool:
+    return bool(re.search(r"CUDA|llama-server|terminated|out of memory|status code: 500", err, re.I))
 
 
 def unload(model: str) -> None:
@@ -94,17 +121,29 @@ class LocalBrain:
         self.label = (f"⚡ супер-мозг {model} (на ПК)" if super_ else
                       f"{model} ({'облако Ollama' if cloud else 'на ПК'})")
 
+        self.num_gpu: int | None = None        # сколько слоёв супер-мозга класть в видеокарту (остальное — в RAM)
+
     @property
     def ctx(self) -> int:
-        return int(getattr(config, "STUDIO_SUPER_CTX", 32768) if self.super else getattr(config, "STUDIO_LOCAL_CTX", 16384))
+        if self.super:
+            return int(getattr(config, "STUDIO_SUPER_CTX", 32768))
+        if self.model == config.MODEL:
+            return int(config.CONTEXT_SIZE)    # та же память, что у голосовой Мартышки — одна копия модели на двоих
+        return int(getattr(config, "STUDIO_LOCAL_CTX", 16384))
 
     def prepare(self) -> None:
-        """Освободить видеокарту под этот мозг: выгрузить остальные модели (они загрузятся обратно сами)."""
+        """Освободить видеокарту под этот мозг: выгрузить остальные модели (они загрузятся обратно сами).
+        Для супер-мозга ещё и посчитать, сколько его слоёв реально влезет: видеокарту делят голос и уши
+        голосовой Мартышки, браузер, игры — если положить больше, Ollama падает с ошибкой CUDA."""
         if self.cloud:
             return
-        for m in loaded_models():
-            if m != self.model and not m.startswith(self.model + ":"):
-                unload(m)
+        others = [m for m in loaded_models() if m != self.model and not m.startswith(self.model + ":")]
+        for m in others:
+            unload(m)
+        if self.super:
+            if others:
+                time.sleep(2.0)                # видеопамять освобождается не мгновенно
+            self.num_gpu = super_gpu_layers(free_vram_mb())
 
     def warm(self) -> None:
         """Заранее загрузить модель с нужной памятью, чтобы первый ответ был быстрым."""
@@ -143,6 +182,27 @@ class LocalBrain:
         if self.use_tools and tools:
             kw["tools"] = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
                                                              "parameters": t["input_schema"]}} for t in tools]
+        for attempt in range(3):
+            if self.super and self.num_gpu is not None:
+                kw["options"]["num_gpu"] = self.num_gpu
+            res = self._run(kw, on_text, should_stop, on_progress)
+            # супер-мозг не влез в видеокарту — пробуем ещё раз, положив в неё меньше слоёв
+            if (self.super and res.stop == "error" and _gpu_crash(res.error) and not res.text
+                    and not res.tool_calls and attempt < 2):
+                start = self.num_gpu if self.num_gpu is not None else SUPER_LAYERS
+                self.num_gpu = max(0, start // 2 - 2) if attempt == 0 else 0
+                if on_progress:
+                    on_progress(f"\n[видеокарта занята — гружу супер-мозг иначе: {self.num_gpu} из "
+                                f"{SUPER_LAYERS} слоёв в видеокарту, остальное в память]\n")
+                time.sleep(1.5)
+                continue
+            if self.super and res.stop == "error" and _gpu_crash(res.error):
+                res.gpu_crash = True
+            return res
+        return res
+
+    def _run(self, kw: dict, on_text, should_stop, on_progress) -> StepResult:
+        import ollama
         res = StepResult()
         try:
             for chunk in ollama.Client().chat(**kw):
