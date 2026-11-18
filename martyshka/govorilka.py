@@ -79,30 +79,54 @@ def status() -> str:
     if not cable_ready():
         return "Не установлен виртуальный кабель VB-CABLE — без него Мартышка не может говорить в Говорилку."
     if is_running():
-        return "Мартышка сейчас сидит в Говорилке."
-    return "Мартышка сейчас не в Говорилке."
+        try:
+            voice = json.loads(STATE_FILE.read_text(encoding="utf-8")).get("in_voice")
+        except Exception:
+            voice = None
+        return "Мартышка на сервере " + ("и сидит в войсе." if voice else "(не в войсе)." if voice is False
+                                         else "— захожу в войс…")
+    return "Мартышки сейчас нет в Говорилке."
+
+
+WANT_VOICE = BOT_DIR / "в_голосе.txt"          # «1» — сидеть в голосовой комнате, «0» — только на сервере
+
+
+def want_voice() -> bool:
+    try:
+        return WANT_VOICE.read_text().strip() != "0"
+    except Exception:
+        return True
 
 
 def start() -> str:
-    """Запустить Мартышку в Говорилке отдельным процессом (из Студии)."""
+    """«Зайди в войс»: если Мартышки нет на сервере — запустить её; потом она сама войдёт в голос."""
     msg = status()
     if "не установлен" in msg.lower() or "не нашла" in msg.lower():
         return msg
-    if is_running():
-        return "Мартышка уже сидит в Говорилке."
     BOT_DIR.mkdir(parents=True, exist_ok=True)
+    WANT_VOICE.write_text("1")
+    if is_running():
+        return "Захожу в войс — через пару секунд буду в голосовой комнате."
     RUN_FLAG.write_text("1")
     exe = config.PROJECT_DIR / ".venv" / "Scripts" / "pythonw.exe"
     subprocess.Popen([str(exe), "-m", "martyshka.govorilka"], cwd=str(config.PROJECT_DIR),
                      creationflags=0x08000000)
-    return "Захожу в Говорилку как «%s». Через 20–40 секунд буду на сервере." % config.GOVORILKA_NICK
+    return f"Захожу в Говорилку как «{config.GOVORILKA_NICK}» и сразу в войс — через 30–60 секунд буду."
 
 
 def stop() -> str:
+    """«Выйди с войса»: выйти из голосовой комнаты, но остаться на сервере."""
+    BOT_DIR.mkdir(parents=True, exist_ok=True)
+    WANT_VOICE.write_text("0")
+    return "Выхожу с войса (на сервере остаюсь)." if is_running() else "Меня и так нет в войсе."
+
+
+def quit_server() -> str:
+    """Совсем уйти с сервера и закрыть свою копию Говорилки."""
     if RUN_FLAG.exists():
         RUN_FLAG.unlink()
-        return "Выхожу из Говорилки."
-    return "Мартышки и так нет в Говорилке."
+        return "Ухожу с сервера совсем."
+    return "Меня и так нет на сервере."
 
 
 # ---------- настройки, которые можно менять на ходу (из Студии) ----------
@@ -211,8 +235,14 @@ STATUS_RE = re.compile(rf"\b(ты|мартышка)\b.{{0,15}}\b(в|во)\b.{{0,
                        rf"что (там )?(говорят|было) (в|во) {VOICE_WORDS}", re.I)
 
 
+QUIT_RE = re.compile(rf"(уйди|выйди|отключись)\w*\s+(совсем|полностью)|(выключи|закрой)\w*.{{0,10}}{VOICE_WORDS}|"
+                     r"(уйди|выйди)\w*\s+(с|из)\s+сервер", re.I)
+
+
 def handle_command(text: str) -> str | None:
     """Быстрые команды без мозга. Возвращает ответ или None (это не команда для Говорилки)."""
+    if QUIT_RE.search(text):
+        return quit_server()
     if LEAVE_RE.search(text):
         return stop()
     if JOIN_RE.search(text):
@@ -275,8 +305,198 @@ def _launch_client() -> subprocess.Popen:
     env = dict(os.environ, APPDATA=str(APPDATA))
     si = subprocess.STARTUPINFO()
     si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    si.wShowWindow = 7                                   # свёрнутым, не отнимая фокус
+    si.wShowWindow = 4                                   # не отнимая фокус (потом окно уедет за край экрана)
     return subprocess.Popen([str(config.GOVORILKA_EXE)], env=env, cwd=str(APPDATA), startupinfo=si)
+
+
+# ---------- «Войти в голос»: нажимаем кнопку в СВОЁМ окне сообщениями Windows (курсор и фокус брата не трогаем) ----------
+def _main_window(pid: int):
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    found = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    def cb(h, _):
+        p = wintypes.DWORD()
+        u.GetWindowThreadProcessId(h, ctypes.byref(p))
+        if p.value == pid:
+            buf = ctypes.create_unicode_buffer(128)
+            u.GetWindowTextW(h, buf, 128)
+            if buf.value.startswith("Говорилка"):
+                found.append(h)
+        return True
+    u.EnumWindows(cb, 0)
+    return found[0] if found else None
+
+
+def _snapshot(h):
+    """Снимок окна (работает и для DirectX-окон, и когда окно перекрыто другими)."""
+    import ctypes
+    from ctypes import wintypes
+    from PIL import Image
+    u, gdi = ctypes.windll.user32, ctypes.windll.gdi32
+    r = wintypes.RECT()
+    u.GetWindowRect(h, ctypes.byref(r))
+    w, hh = r.right - r.left, r.bottom - r.top
+    hdc = u.GetWindowDC(h)
+    mem = gdi.CreateCompatibleDC(hdc)
+    bmp = gdi.CreateCompatibleBitmap(hdc, w, hh)
+    gdi.SelectObject(mem, bmp)
+    u.PrintWindow(h, mem, 2)
+
+    class BMI(ctypes.Structure):
+        _fields_ = [("biSize", ctypes.c_uint32), ("biWidth", ctypes.c_int32), ("biHeight", ctypes.c_int32),
+                    ("biPlanes", ctypes.c_uint16), ("biBitCount", ctypes.c_uint16), ("rest", ctypes.c_uint32 * 7)]
+    bmi = BMI(40, w, -hh, 1, 32)
+    buf = ctypes.create_string_buffer(w * hh * 4)
+    gdi.GetDIBits(mem, bmp, 0, hh, buf, ctypes.byref(bmi), 0)
+    gdi.DeleteObject(bmp)
+    gdi.DeleteDC(mem)
+    u.ReleaseDC(h, hdc)
+    return Image.frombuffer("RGBA", (w, hh), buf, "raw", "BGRA", 0, 1).convert("RGB")
+
+
+def _find_join_button(img):
+    """Фиолетовая кнопка «Войти в голос» в левой колонке. Возвращает её центр или None (значит, уже в голосе)."""
+    a = np.asarray(img).astype(int)
+    left = a[:, : int(a.shape[1] * 0.26)]
+    r, gr, b = left[..., 0], left[..., 1], left[..., 2]
+    mask = (b > 200) & (r > 120) & (r < 190) & (gr < 120)        # насыщенный фиолетовый (#8b5cf6 и похожие)
+    rows = np.where(mask.sum(axis=1) > left.shape[1] * 0.6)[0]
+    if len(rows) < 15:
+        return None
+    # берём самый крупный сплошной кусок строк (кнопка, а не тонкая полоска выделения)
+    groups, start = [], rows[0]
+    for i in range(1, len(rows) + 1):
+        if i == len(rows) or rows[i] != rows[i - 1] + 1:
+            groups.append((start, rows[i - 1]))
+            if i < len(rows):
+                start = rows[i]
+    top, bottom = max(groups, key=lambda t: t[1] - t[0])
+    if bottom - top < 15:
+        return None
+    cols = np.where(mask[top:bottom + 1].any(axis=0))[0]
+    return int((cols[0] + cols[-1]) / 2), int((top + bottom) / 2)
+
+
+def _real_click(h, x: int, y: int) -> bool:
+    """Настоящий клик на долю секунды: окно Мартышки вперёд → клик → курсор и окно брата обратно.
+    Кликаем ТОЛЬКО если впереди именно окно Мартышки (иначе ничего не жмём)."""
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    prev_fg = u.GetForegroundWindow()
+    pt = wintypes.POINT()
+    u.GetCursorPos(ctypes.byref(pt))
+    u.keybd_event(0x12, 0, 0, 0)                     # Alt: Windows разрешает вывести окно вперёд
+    u.SetForegroundWindow(h)
+    u.keybd_event(0x12, 0, 2, 0)
+    time.sleep(0.25)
+    if u.GetForegroundWindow() != h:
+        return False
+    org = wintypes.POINT(0, 0)
+    u.ClientToScreen(h, ctypes.byref(org))
+    u.SetCursorPos(org.x + x, org.y + y)
+    time.sleep(0.12)
+    u.mouse_event(0x0002, 0, 0, 0, 0)                # левая кнопка вниз
+    time.sleep(0.06)
+    u.mouse_event(0x0004, 0, 0, 0, 0)                # вверх
+    time.sleep(0.15)
+    u.SetCursorPos(pt.x, pt.y)
+    if prev_fg and prev_fg != h:
+        u.SetForegroundWindow(prev_fg)
+    return True
+
+
+def _find_leave_button(img):
+    """Красная кнопка «положить трубку» (выйти из голоса) в левой колонке."""
+    a = np.asarray(img).astype(int)
+    left = a[:, : int(a.shape[1] * 0.26)]
+    r, gr, b = left[..., 0], left[..., 1], left[..., 2]
+    mask = (r > 200) & (gr < 120) & (b < 130)
+    ys, xs = np.where(mask)
+    if len(ys) < 300:
+        return None
+    return int(np.median(xs)), int(np.median(ys))
+
+
+PARK_X = -4000     # окно Мартышки живёт за краем экрана: работает и рисуется, но не мешает
+
+
+def _park(h) -> None:
+    import ctypes
+    u = ctypes.windll.user32
+    if u.IsIconic(h):
+        u.ShowWindow(h, 4)                           # развернуть без фокуса (свёрнутое окно не рисуется)
+        time.sleep(1.0)
+    u.SetWindowPos(h, 0, PARK_X, 100, 0, 0, 0x0001 | 0x0004 | 0x0010)
+
+
+def _unpark(h) -> None:
+    import ctypes
+    ctypes.windll.user32.SetWindowPos(h, 0, 120, 120, 0, 0, 0x0001 | 0x0004 | 0x0010)
+    time.sleep(0.4)
+
+
+def leave_voice(pid: int) -> bool:
+    import ctypes
+    h = _main_window(pid)
+    if not h:
+        return False
+    _park(h)
+    pos = _find_leave_button(_snapshot(h))
+    if pos is None:
+        return True
+    _unpark(h)
+    try:
+        if ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000:
+            time.sleep(2)
+        _real_click(h, *pos)
+        time.sleep(1.5)
+    finally:
+        _park(h)
+    return _find_leave_button(_snapshot(h)) is None
+
+
+def in_voice(pid: int) -> bool | None:
+    """True — Мартышка в голосе, False — нет, None — окно не найдено."""
+    import ctypes
+    h = _main_window(pid)
+    if not h:
+        return None
+    _park(h)
+    img = _snapshot(h)
+    if _find_join_button(img) is not None:
+        return False
+    return _find_leave_button(img) is not None or None
+
+
+def join_voice(pid: int, tries: int = 4) -> bool:
+    """Нажать «Войти в голос» в своей копии Говорилки. True — в голосе."""
+    import ctypes
+    u = ctypes.windll.user32
+    for _ in range(tries):
+        h = _main_window(pid)
+        if h:
+            _park(h)
+            pos = _find_join_button(_snapshot(h))
+            if pos is None:
+                return True
+            # брат как раз жмёт мышкой — подождём, не будем мешать
+            if u.GetAsyncKeyState(0x01) & 0x8000 or u.GetAsyncKeyState(0x02) & 0x8000:
+                time.sleep(3)
+                continue
+            _unpark(h)
+            try:
+                _real_click(h, *pos)
+                time.sleep(2.0)
+            finally:
+                _park(h)
+            if _find_join_button(_snapshot(h)) is None:
+                return True
+        time.sleep(3)
+    return False
 
 
 # ---------- журнал ----------
@@ -425,15 +645,48 @@ def main() -> None:
                     f"мозг {brain_model()})")
     history: list[dict] = []
     last_reply_at, chain = 0.0, 0
+    voice_state: bool | None = None
+    next_check = 0.0
+
+    def save_state():
+        STATE_FILE.write_text(json.dumps({"pid": os.getpid(), "client": client.pid, "in_voice": voice_state}),
+                              encoding="utf-8")
     try:
-        time.sleep(8)                                     # дать Говорилке подключиться
-        mouth.say("Всем привет! Это Мартышка, ИИ-помощница. Зовите по имени, если что.")
-        listener.paused.clear()
+        time.sleep(10)                                    # дать Говорилке открыться и подключиться
         while RUN_FLAG.exists() and client.poll() is None:
+            # раз в 8 секунд: там ли Мартышка, где брат хочет (в войсе / не в войсе); выкинуло — заходит снова
+            if time.time() >= next_check:
+                next_check = time.time() + 8
+                try:
+                    actual = in_voice(client.pid)
+                    if want_voice() and actual is False:
+                        listener.paused.set()
+                        if join_voice(client.pid):
+                            _log("система", "зашла в войс")
+                            time.sleep(1.5)
+                            mouth.say("Всем привет! Это Мартышка, ИИ-помощница. Зовите по имени, если что.")
+                            actual = True
+                    elif not want_voice() and actual:
+                        listener.paused.set()
+                        mouth.say("Ладно, выхожу с войса. Пока!")
+                        if leave_voice(client.pid):
+                            _log("система", "вышла с войса")
+                            actual = False
+                    if actual is not None and actual != voice_state:
+                        voice_state = actual
+                        save_state()
+                except Exception as e:
+                    _log("ошибка", f"войс: {type(e).__name__}: {e}")
+                if voice_state:
+                    listener.paused.clear()
+                else:
+                    listener.paused.set()
             try:
                 audio = listener.phrases.get(timeout=1.0)
             except queue.Empty:
                 _reload_settings()                        # голос и мозг можно поменять из Студии на ходу
+                continue
+            if not voice_state:
                 continue
             try:
                 last_reply_at, chain = _handle(audio, ears, mouth, listener, history, last_reply_at, chain,
@@ -442,8 +695,9 @@ def main() -> None:
                 _log("ошибка", f"{type(e).__name__}: {e}")
     finally:
         try:
-            listener.paused.set()
-            mouth.say("Ладно, я пошла. Пока!")
+            if voice_state:
+                listener.paused.set()
+                mouth.say("Ладно, я пошла. Пока!")
         except Exception:
             pass
         if client.poll() is None:

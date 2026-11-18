@@ -635,7 +635,7 @@ $('#sSave').onclick=async()=>{ const r=await api().save_settings({STUDIO_TASK_BR
 let govTimer=0;
 function fillGov(g){
   $('#gNick').textContent=g.nick; $('#gStatus').textContent=(g.message?g.message+' ':'')+g.status;
-  $('#gCable').style.display=g.cable?'none':'block'; $('#gJoin').disabled=!g.cable||g.running; $('#gLeave').disabled=!g.running;
+  $('#gCable').style.display=g.cable?'none':'block'; $('#gJoin').disabled=!g.cable; $('#gLeave').disabled=!g.running;
   $('#gVoice').innerHTML=Object.entries(g.speakers).map(([k,v])=>`<option value="${k}" ${k===g.speaker?'selected':''}>${esc(v)}</option>`).join('');
   $('#gModel').innerHTML=g.models.map(m=>`<option ${m===g.model?'selected':''}>${esc(m)}</option>`).join('');
   $('#gAuto').checked=g.autostart; $('#gLog').textContent=g.log||'Пока тихо.'; }
