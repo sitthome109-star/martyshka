@@ -757,6 +757,7 @@ MORNI_TALK_RE = re.compile(r"(пообща|поговор|побол|поспо�
                            r"\w*.{0,25}\bм[оу]рни", re.I)
 MORNI_RE = re.compile(r"\bм[оу]рни\w*", re.I)
 MORNI_MINUTES = 4          # сколько длится разговор с Морни после просьбы
+MORNI_START_EVERY = 6 * 60  # не чаще: сама заводит разговор с Морни, когда в войсе тихо
 
 
 def system_prompt(mode: str = "вежливая", with_morni: bool = False) -> str:
@@ -919,6 +920,7 @@ def main() -> None:
     voice_state: bool | None = None
     next_check = 0.0
     pending, pending_at, morni_until = "", 0.0, 0.0       # недоговорённая фраза; до когда болтаем с Морни
+    started_at, last_initiative, next_initiative_quiet = time.time(), time.time(), 90.0
 
     def save_state():
         STATE_FILE.write_text(json.dumps({"pid": os.getpid(), "client": client.pid, "in_voice": voice_state}),
@@ -968,6 +970,17 @@ def main() -> None:
                     if text:
                         pending = f"{pending} {text}".strip()
                         pending_at = time.time()
+                # сама заводит разговор с Морни, когда в войсе давно тихо (не чаще раза в MORNI_START_EVERY)
+                quiet_for = time.time() - max(listener.last_voice_at, last_reply_at, started_at)
+                if (not pending and not listener.hearing and quiet_for > next_initiative_quiet
+                        and time.time() - last_initiative > MORNI_START_EVERY):
+                    import random
+                    last_initiative = time.time()
+                    next_initiative_quiet = random.uniform(45, 120)
+                    _log("система", "сама начинаю разговор с Морни")
+                    last_reply_at, chain, morni_until = _respond(
+                        "(в войсе тихо — заведи разговор с Морни: задай ей колкий или интересный вопрос)", mouth,
+                        listener, history, 0.0, 0, mood, time.time() + MORNI_MINUTES * 60, initiative=True)
                 # отвечаем, только когда человек (или Морни) договорил: фраза закончена и тишина, или пауза длинная
                 if pending and not listener.hearing:
                     quiet = time.time() - max(pending_at, listener.last_voice_at)
@@ -1007,11 +1020,30 @@ def _hear(audio, ears, hallucinations) -> str:
     return text
 
 
-def _respond(text, mouth, listener, history, last_reply_at, chain, mood, morni_until):
+def _respond(text, mouth, listener, history, last_reply_at, chain, mood, morni_until, initiative=False,
+             speaker=""):
     """Договорённая фраза: решить, отвечать ли, и ответить голосом.
+    speaker — кто сказал (по подсветке в окне Говорилки), initiative — Мартышка сама начинает разговор с Морни.
     Возвращает новые (время последнего ответа, длина цепочки без имени, до когда болтаем с Морни)."""
     t0 = time.time()
-    history.append({"role": "user", "content": f"(кто-то на сервере): {text}"})
+    if initiative:
+        history.append({"role": "user", "content": text})
+        listener.paused.set()
+        try:
+            mouth.first_audio_at, mouth.mood_voice = 0.0, None
+            mouth.synth_stats.clear()
+            answer = reply_stream(history, mouth, mood.update("", False), with_morni=True)
+            mouth.wait()
+        finally:
+            listener.paused.clear()
+        if answer:
+            history.append({"role": "assistant", "content": answer})
+            _log(config.GOVORILKA_NICK, f"{answer}   [сама начала разговор с Морни]")
+        return time.time(), 0, morni_until
+    who = speaker or "кто-то на сервере"
+    history.append({"role": "user", "content": f"({who}): {text}"})
+    if speaker.lower().startswith(("морни", "мурни", "morni")):
+        morni_until = max(morni_until, time.time() + MORNI_MINUTES * 60)   # отвечаем Морни — обращаемся к ней
     named = bool(NAME_RE.search(text))
     asked_morni = bool(MORNI_TALK_RE.search(text)) and (
         named or time.time() - last_reply_at < config.GOVORILKA_FOLLOWUP)
