@@ -12,29 +12,28 @@ OWNER_NICKNAME = "братан"
 # Манера общения: "bro" — свой в доску (брат, мат к месту), "jarvis" — спокойный ИИ-дворецкий (на «вы», «сэр», без мата)
 PERSONALITY_MODE = "bro"
 
-# Картинки 18+ (выдуманные взрослые). Запреты на детей и на «раздевание» реальных фото не отключаются.
-IMAGES_ADULT = True
-# Генератор картинок: "auto" (RealVisXL, если скачан), "realvis" или "turbo" (SDXL-Turbo — быстрее, но слабее)
-IMAGE_MODEL = "auto"
 # Как обращаться в режиме Джарвиса
 JARVIS_ADDRESS = "сэр"
 
-# Какой «мозг» использовать (название модели в Ollama).
-# Чтобы попробовать другую модель: скачай её (ollama pull ...) и впиши сюда.
-MODEL = "gemma4:12b-it-qat"   # 17.11.2026: умнее gemma3 (21/21 против 18/21 на тесте), чуть меньше видеопамяти
+# ---------- МОЗГ: DeepSeek API (в облаке, на ПК ничего не грузится) ----------
+DEEPSEEK_KEY = ""                     # ключ с platform.deepseek.com — хранится в data/settings.json
+DEEPSEEK_URL = "https://api.deepseek.com"
+# Каким мозгом думать: "auto" — сам выбирает (простое → flash, сложное → pro), "flash" или "pro"
+BRAIN_MODE = "auto"
+# deepseek-flash — быстрый, видит экран и картинки; deepseek-v4-pro — сильный, для кода и сложного
+MODEL = "deepseek-flash"
+# Студия (чат-агент): насколько глубоко думать сильному мозгу над задачами — "low", "high" или "max"
+THINK_EFFORT = "high"
 
-# Сколько модель держит в видеопамяти после последнего разговора.
-# -1 = всегда (отвечает мгновенно; для игр есть «Мартышка, режим игр»), "30m" = 30 минут, 0 = сразу выгружать.
+# Оставлено для старого кода (в облаке ничего не значит)
 KEEP_ALIVE = -1
-
-# Сколько текста модель «видит» за раз (больше = помнит длиннее разговор, но ест видеопамять)
-CONTEXT_SIZE = 6144   # больше — не влезает в видеопамять вместе с голосом и ушами (всё начинает тормозить)
+CONTEXT_SIZE = 65536
 
 # «Температура»: 0.3 = спокойный и предсказуемый, 1.0 = дикий и креативный
-TEMPERATURE = 0.8
+TEMPERATURE = 0.9
 
-# Сколько последних реплик разговора передавать модели
-HISTORY_IN_PROMPT = 16
+# Сколько последних реплик разговора передавать модели (у DeepSeek память огромная — можно много)
+HISTORY_IN_PROMPT = 40
 
 # Сколько последних реплик хранить на диске между запусками
 HISTORY_ON_DISK = 200
@@ -43,31 +42,19 @@ HISTORY_ON_DISK = 200
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_DIR / "data"
 
-# ---------- ГОЛОС ----------
+# ---------- ГОЛОС: Fish Audio (в облаке) ----------
 # Включить голос (True = говорит, False = только текст)
 VOICE_ENABLED = True
+FISH_KEY = ""                          # ключ с fish.audio — хранится в data/settings.json
+# Модель озвучки: "s2.1-pro-free" (бесплатно до 30.11.2026, потом сама переходит на s2.1-pro) или "s2.1-pro"
+FISH_MODEL = "s2.1-pro-free"
+# Голос Мартышки (номер голоса Fish). Выбирается в настройках из списка. Пусто = Артём.
+VOICE_ID = ""
+# Голос в Говорилке (пусто — тот же, что у Мартышки)
+GOVORILKA_VOICE_ID = ""
 
-# Движок голоса:
-#   "qwen_clone" — Qwen3-TTS, голос клонируется с образца (WAV ниже); быстрый, говорит и по-немецки/английски
-#   "espeech"    — русская модель F5-TTS (старый вариант)
-#   "qwen"       — Qwen3-TTS со встроенным голосом (ryan и др.; по-русски с акцентом)
-VOICE_ENGINE = "qwen_clone"
-QWEN_CLONE_DIR = PROJECT_DIR / "models" / "voice" / "Qwen3-TTS-12Hz-0.6B-Base"
-# Живость голоса Qwen: 0.6 — ровнее и спокойнее, 0.9 — эмоциональнее (иногда «чудит»)
-VOICE_TEMPERATURE = 0.8
-# Эффект «голос ИИ» (металлический блеск + лёгкое эхо, как у помощника в кино): 0 = выкл, 1 = обычно, 1.5 = сильно
-VOICE_FX = 0.0
-
-# --- настройки ESpeech ---
-# Образец голоса (до 12 секунд, WAV) и ТОЧНЫЙ текст, который в нём звучит.
-# Хочешь другой тембр — положи свою запись в models/voice/reference и впиши сюда.
-VOICE_REFERENCE_WAV = PROJECT_DIR / "models" / "voice" / "reference" / "aidar.wav"
-VOICE_REFERENCE_TEXT = (
-    "Здарова, братан! Ну чё, опять до трёх ночи в комп пялишься? "
-    "Ладно, хуй с тобой, рассказывай, чё надо. Сделаю всё в лучшем виде, блять."
-)
-# Качество: 32 = лучше, 16 = быстрее
-VOICE_QUALITY = 16
+# Выразительность голоса: 0.5 — ровнее, 0.9 — эмоциональнее
+VOICE_TEMPERATURE = 0.75
 # Скорость речи: 1.0 = обычная, 1.15 = бодрее, 0.9 = медленнее
 VOICE_SPEED = 1.0
 
@@ -109,8 +96,7 @@ EARS_MULTILANG = True
 # Звук «слушаю» при срабатывании имени
 WAKE_BEEP = True
 
-# Модель распознавания речи
-WHISPER_DIR = PROJECT_DIR / "models" / "ears" / "whisper-large-v3-turbo"
+# «Ухо на имя» — маленькая модель на ПК (саму фразу распознаёт DeepSeek)
 VOSK_DIR = PROJECT_DIR / "models" / "ears" / "vosk-model-small-ru-0.22"
 
 # ---------- ЛИЦО (шар на экране) ----------
@@ -155,42 +141,25 @@ FACE_COLORS = {
 # Размеры для меню
 FACE_SIZES = {"маленький": 100, "средний": 130, "большой": 170, "огромный": 220}
 
-# ---------- СТУДИЯ (окно-чат с агентом) ----------
-# Каким мозгом решать задачи: "auto" (Claude, если есть ключ → Ollama Cloud → модель на ПК),
-# "claude", "ollama_cloud" или "local"
-STUDIO_TASK_BRAIN = "auto"
-STUDIO_CLAUDE_KEY = ""               # ключ с console.anthropic.com — вставляется в настройках студии
-STUDIO_CLAUDE_MODEL = "claude-opus-5-5"
-STUDIO_CLAUDE_EFFORT = "high"        # low / medium / high / xhigh — выше = умнее, но дольше и дороже
-STUDIO_OLLAMA_CLOUD_MODEL = ""       # например "glm-5.3:cloud" (сначала «ollama signin» в консоли)
-STUDIO_LOCAL_AGENT_MODEL = ""        # пусто = твоя MODEL, если она умеет инструменты, иначе gemma4
-STUDIO_LOCAL_CTX = 16384             # память локального мозга в студии (больше = длиннее задачи)
-# Супер-мозг для программирования: включается сам, когда просишь что-то написать, и выгружается после
-STUDIO_SUPER_MODEL = "qwen3.6:35b-a3b"
-STUDIO_SUPER_CTX = 32768
+# ---------- ЧАТ (окно с агентом, открывается из шара) ----------
 STUDIO_AUTO_COMMANDS = False         # True = команды в папке проектов выполнять без вопроса
 STUDIO_MAX_STEPS = 40                # сколько шагов агент может сделать за одну задачу
-STUDIO_DISABLED_GROUPS = []          # выключенные коннекторы: web, files, shell, pc, images, hands, memory
-STUDIO_CLOSE_TO_ORB = True           # крестик прячет окно в шарик (False — закрывать совсем)
+STUDIO_DISABLED_GROUPS = []          # выключенные коннекторы: web, files, dev, shell, pc, hands, memory
 # Папка, где агент свободно создаёт файлы и проекты
 STUDIO_WORKSPACE = Path.home() / "Documents" / "Проекты Мартышки"
 
 # ---------- ГОВОРИЛКА (Мартышка сидит на голосовом сервере как отдельный участник) ----------
 GOVORILKA_EXE = Path.home() / "Desktop" / "govorilka.exe"
 GOVORILKA_NICK = "Мартышка (ИИ)"
-# Голос на сервере — встроенный голос Qwen3-TTS (НЕ клон человека): ryan, aiden, eric, dylan…
-GOVORILKA_SPEAKER = "ryan"
 # Куда вторая копия Говорилки выводит звук сервера (Мартышка записывает его «петлёй»). Лучше устройство,
 # в которое ничего не воткнуто, иначе брат услышит сервер дважды.
 GOVORILKA_LISTEN_DEVICE = "Динамики (HyperX QuadCast)"
 # Виртуальный кабель VB-CABLE: Мартышка говорит в CABLE Input, её Говорилка слушает CABLE Output как микрофон
 GOVORILKA_CABLE_PLAY = "CABLE Input"
 GOVORILKA_CABLE_MIC = "CABLE Output (VB-Audio Virtual Cable)"
-# Характер в Говорилке: "авто" (вежливая, дерзит только в ответ на оскорбления) или "злая" (язвит всем всегда)
-GOVORILKA_PERSONA = "авто"
-# Каким мозгом думать в Говорилке ("" — тем же, что и обычная Мартышка, MODEL)
+# Каким мозгом думать в Говорилке: "" или "deepseek-flash" — быстрый, "deepseek-v4-pro" — умнее
 GOVORILKA_MODEL = ""
-# Заходить в Говорилку самой при включении ПК
+# Сидеть в Говорилке всегда: заходить при включении ПК и возвращаться, если выкинуло
 GOVORILKA_AUTOSTART = True
 # Сколько секунд после своего ответа отвечать без имени (идёт разговор)
 GOVORILKA_FOLLOWUP = 20
@@ -199,11 +168,6 @@ GOVORILKA_MAX_CHAIN = 6
 
 # Своими словами — что добавить к характеру Мартышки (из окна настроек)
 PERSONALITY_EXTRA = ""
-
-# --- настройки Qwen3-TTS (если VOICE_ENGINE = "qwen") ---
-VOICE_MODEL_DIR = PROJECT_DIR / "models" / "voice" / "Qwen3-TTS-12Hz-0.6B-CustomVoice"
-# Варианты: ryan, aiden, eric, dylan, uncle_fu (мужские); serena, vivian, ono_anna, sohee (женские)
-VOICE_SPEAKER = "ryan"
 
 # Громкость голоса: 1.0 = как есть, 1.5 = громче, 0.7 = тише
 VOICE_VOLUME = 1.3

@@ -23,19 +23,17 @@ def main() -> None:
         os.system("")  # включает цвета в консоли Windows
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-    # Сначала мозг, потом голос: если грузить одновременно, они толкаются в видеопамяти
-    # и первый ответ тормозит.
-    print(f"{GREY}Загружаю мозг ({config.MODEL})...{RESET}")
+    print(f"{GREY}Мозг: DeepSeek ({config.BRAIN_MODE}), голос: Fish Audio{RESET}")
     brain = Brain()
+    brain.source = "чат"
     try:
         brain.warm_up()
     except Exception as e:
-        print(f"Не могу достучаться до Ollama: {e}\nПроверь, что Ollama запущена (иконка ламы в трее).")
+        print(f"Мозг не готов: {e}")
         return
 
     voice = None
     if config.VOICE_ENABLED:
-        print(f"{GREY}Загружаю голос ({config.VOICE_ENGINE})...{RESET}")
         from martyshka.voice import Voice
         voice = Voice()
 

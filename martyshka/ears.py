@@ -5,7 +5,7 @@
   1. Микрофон слушает постоянно. Маленькая модель Vosk (на процессоре) ждёт слово «Мартышка».
      Ничего, кроме этого, она никуда не отправляет — всё остаётся на компьютере.
   2. Услышала имя → пищит и записывает твою фразу, пока ты не замолчишь (детектор речи Silero).
-  3. Запись уходит в Whisper (на видеокарте), он превращает речь в текст.
+  3. Запись уходит в DeepSeek (в облаке), он превращает речь в текст.
   4. После ответа Мартышка ещё несколько секунд слушает без имени — можно продолжить разговор.
 
 События, которые уши отдают в очередь `events`:
@@ -76,104 +76,52 @@ def make_beep() -> np.ndarray:
     return np.concatenate([tone(880, 0.07), np.zeros(int(sr * 0.03)), tone(1320, 0.09)]).astype(np.float32)
 
 
-# ---------- распознавание речи ----------
+# ---------- распознавание речи (DeepSeek, в облаке) ----------
+DE_WORDS = re.compile(r"\b(ich|nicht|und|der|die|das|ist|wie|was|bitte|danke|hallo|mach|kannst|du|mir|ein|eine|"
+                      r"heute|morgen|warum|wo|wann)\b|[äöüß]", re.I)
+
+
+def guess_language(text: str) -> str:
+    """На каком языке сказано: по буквам и частым словам."""
+    t = text.lower()
+    cyr, lat = len(re.findall(r"[а-яёіїєґ]", t)), len(re.findall(r"[a-zäöüß]", t))
+    if cyr >= lat:
+        return "uk" if re.search(r"[іїєґ]", t) and not re.search(r"[ыэъё]", t) else "ru"
+    return "de" if len(DE_WORDS.findall(t)) >= 1 else "en"
+
+
 class Transcriber:
+    """Речь → текст через DeepSeek ASR. Видеокарту не занимает; язык определяется сам."""
     def __init__(self):
-        self.model = None
         self.last_language = "ru"
         self.last_time = 0.0
         self.last_probs = {}
         self.last_candidates = None
-        self.load()
 
     def load(self) -> None:
-        """Загрузить Whisper на видеокарту (и прогреть — первый запуск долгий)."""
-        import torch  # noqa: F401 — подгружает библиотеки видеокарты (cublas), которые нужны Whisper
-        from faster_whisper import WhisperModel
-        self.model = WhisperModel(str(config.WHISPER_DIR), device="cuda", compute_type="int8_float16")
-        noise = (np.random.randn(SR * 2) * 0.01).astype(np.float32)
-        self.transcribe(noise)
-
-    # На какие языки можно переключиться с русского и насколько уверенно Whisper должен их узнать.
-    # Славянские (украинский, болгарский…) НЕ переключаем: Whisper путает их с русским и коверкает речь,
-    # а украинскую фразу мозг и так поймёт из русской записи.
-    LANGS = {"en": 0.8, "de": 0.8}
-    # Если уши сомневаются (немецкий/английский хотя бы с такой вероятностью) — пишем фразу двумя способами
-    # и выбираем ту запись, в которой Whisper увереннее. С русским акцентом «Hallo» редко бывает «точно немецким».
-    MAYBE = 0.08
-    RU_BONUS = 0.05
-    STICKY_SECONDS = 120   # разговор уже идёт на чужом языке — переключиться на него ещё проще
-
-    def detect_language(self, audio: np.ndarray) -> list[str]:
-        """Кандидаты на язык фразы, самый вероятный первым. Один кандидат — сомнений нет."""
-        if not config.EARS_MULTILANG:
-            return ["ru"]
-        try:
-            _lang, _p, probs = self.model.detect_language(audio)
-            probs = dict(probs)
-            self.last_probs = {l: round(probs.get(l, 0), 2) for l in ("ru", "de", "en", "uk")}
-            slavic = sum(probs.get(l, 0) for l in ("ru", "uk", "be", "bg", "sr", "mk", "pl", "cs", "sk"))
-            best = max(self.LANGS, key=lambda l: probs.get(l, 0))
-            if probs.get(best, 0) >= self.LANGS[best] and slavic < 0.15:
-                return [best]
-            if probs.get("uk", 0) >= 0.9 and probs.get("uk", 0) > 6 * probs.get("ru", 0):
-                return ["uk"]
-            import time
-            recent = (self.last_language in self.LANGS and time.time() - self.last_time < self.STICKY_SECONDS)
-            foreign = sum(probs.get(l, 0) for l in self.LANGS)
-            if probs.get("ru", 0) >= 0.9 and not recent:
-                return ["ru"]
-            if foreign < self.MAYBE and not recent:
-                return ["ru"]
-            # сомневаемся — пробуем все: с акцентом немецкий легко «выглядит» английским и наоборот
-            return ["ru"] + sorted(self.LANGS, key=lambda l: -probs.get(l, 0))
-        except Exception:
-            return ["ru"]
-
-    def _run(self, audio: np.ndarray, lang: str, strict: bool):
-        """Распознать на заданном языке. Возвращает (текст, уверенность)."""
-        segments, _ = self.model.transcribe(
-            audio, language=lang, beam_size=1, without_timestamps=True,
-            condition_on_previous_text=False,
-            initial_prompt="Мартышка, братан." if lang in ("ru", "uk") else None,
-            vad_filter=strict,
-        )
-        parts, scores = [], []
-        for s in segments:
-            if strict and (s.no_speech_prob > 0.4 or s.avg_logprob < -0.8):
-                continue
-            if s.no_speech_prob > 0.6 and s.avg_logprob < -1.0:
-                continue
-            parts.append(s.text.strip()); scores.append(s.avg_logprob)
-        text = " ".join(parts).strip()
-        score = sum(scores) / len(scores) if scores else -9.0
-        # «немецкая» запись кириллицей (или русская латиницей) — это не тот язык
-        cyr = len(re.findall(r"[а-яё]", text.lower())); lat = len(re.findall(r"[a-zäöüß]", text.lower()))
-        if (lang == "ru" and lat > cyr) or (lang != "ru" and cyr > lat):
-            score -= 2.0
-        return text, score
+        pass
 
     def unload(self) -> None:
-        """Режим игр: убрать Whisper с видеокарты."""
-        import gc
-        self.model = None
-        gc.collect()
+        pass
 
     def transcribe(self, audio: np.ndarray, strict: bool = False) -> str:
-        """strict=True — для продолжения без имени: строже отсеиваем шум, чтобы не «слышать» то, чего не было."""
-        # Тишина в начале и в конце: без неё Whisper «съедает» первый звук («Артышка» вместо «Мартышка»)
-        pad = np.zeros(int(SR * 0.3), dtype=np.float32)
-        audio = np.concatenate([pad, audio.astype(np.float32), pad])
-        import time
-        candidates = self.detect_language(audio)
-        results = [(lang, *self._run(audio, lang, strict)) for lang in candidates]
-        # русскому небольшая фора: при равной уверенности остаёмся на русском
-        lang, text, _score = max(results, key=lambda r: r[2] + (self.RU_BONUS if r[0] == "ru" else 0))
-        self.last_candidates = [(l, t, round(s, 2)) for l, t, s in results] if len(results) > 1 else None
-        if text:
-            self.last_language, self.last_time = lang, time.time()
+        from . import deepseek
+        audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if len(audio) < SR * 0.3:
+            return ""
+        pad = np.zeros(int(SR * 0.2), dtype=np.float32)
+        try:
+            text = deepseek.transcribe(np.concatenate([pad, audio, pad]), SR)
+        except Exception as e:
+            from . import errlog
+            errlog.write("уши не сработали", ошибка=str(e)[:300])
+            return ""
+        text = (text or "").strip()
         if any(h in text.lower() for h in HALLUCINATIONS):
             return ""
+        if text:
+            self.last_language = guess_language(text) if config.EARS_MULTILANG else "ru"
+            self.last_time = time.time()
         return text
 
 

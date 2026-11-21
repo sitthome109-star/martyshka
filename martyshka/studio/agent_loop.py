@@ -2,7 +2,7 @@
 АГЕНТ СТУДИИ: один чат = одна «сессия».
 
 Как работает задача:
-  1. Решаем, что это: болтовня (лёгкий мозг), простое дело (gemma4) или программирование (супер-мозг).
+  1. Решаем, что это: болтовня (DeepSeek Flash), простое дело (Flash думает) или код/сложное (DeepSeek Pro думает).
   2. Мозгу даём контекст: где папка проектов, какие проекты есть, что открыто на экране, что он помнит о брате,
      над каким проектом шла работа в этом чате. Так он не путается, что и где лежит.
   3. Мозг думает и вызывает инструменты; опасное — только после разрешения брата (окно с причиной и выбором
@@ -43,8 +43,11 @@ CODE_RE = re.compile(
 
 
 def classify(text: str) -> str:
-    """chat — болтовня (лёгкий мозг), task — простое дело с инструментами, code — программирование (супер-мозг)."""
-    if CODE_RE.search(text):
+    """chat — болтовня (Flash), task — простое дело с инструментами (Flash думает), code — код и сложное (Pro)."""
+    if CODE_RE.search(text) or len(text) > 600:
+        return "code"
+    from .. import deepseek
+    if deepseek.HARD_RE.search(text):
         return "code"
     return "task" if TASK_RE.search(text) else "chat"
 
@@ -80,8 +83,16 @@ def _environment(project: str) -> str:
         pass
     facts = tools.memory_facts()
     if facts:
-        parts.append("Ты помнишь о брате и его ПК:\n" + "\n".join(f"- {f}" for f in facts[-40:]))
+        parts.append("Ты помнишь о брате и его ПК:\n" + "\n".join(f"- {f}" for f in facts[-60:]))
     return "\n".join(parts)
+
+
+def _longterm() -> str:
+    try:
+        from .. import longmem
+        return longmem.context(source="чат", today_lines=30, n_days=7)
+    except Exception:
+        return ""
 
 
 def language_of(text: str) -> str:
@@ -105,30 +116,38 @@ def self_knowledge() -> str:
     return f"""ТЫ САМА — ПРОГРАММА. Если брат говорит «это приложение», «эта программа», «Студия», «ты», «твоё окно»,
 «кружок/шарик», «иконка приложения», «ярлык» — речь о ТЕБЕ, а не о его проектах. Не переспрашивай — правь себя:
 - Папка Мартышки: {p} (код: {p / 'martyshka'}; голосовая Мартышка: martyshka_main.py)
-- Студия (это окно): {s}
-  · весь интерфейс окна: {s / 'ui' / 'index.html'} (HTML+CSS+JS в одном файле)
-  · шарик/кружок, в который сворачивается окно: {s / 'ui' / 'orb.html'} (размер окна шарика — ORB в app.py)
-  · своя иконка Студии: {s / 'studio.ico'} (если файла нет — берётся {p / 'martyshka' / 'martyshka.ico'})
-  · запускалка: {p / 'Мартышка Студия.exe'}, ярлык: Рабочий стол\\Мартышка Студия.lnk
-  · мозги: {s / 'brains.py'}, инструменты: {s / 'tools.py'}, агент: {s / 'agent_loop.py'}, окно: {s / 'app.py'}
+- Чат (это окно) открывается из шара голосовой Мартышки (клик по шару → «Открыть чат»): {s}
+  · весь интерфейс окна: {s / 'ui' / 'index.html'} (HTML+CSS+JS в одном файле; шар в окне рисуется так же,
+    как шар голосовой Мартышки — из точек)
+  · шар голосовой Мартышки на экране: {p / 'martyshka' / 'face.py'}
+  · своя иконка: {s / 'studio.ico'} (если файла нет — берётся {p / 'martyshka' / 'martyshka.ico'})
+  · запускалка: {p / 'Мартышка Студия.exe'}, ярлык: Рабочий стол\\Мартышка.lnk
+  · мозги (DeepSeek): {s / 'brains.py'} и {p / 'martyshka' / 'deepseek.py'}; голос (Fish Audio):
+    {p / 'martyshka' / 'fish.py'}; память: {p / 'martyshka' / 'longmem.py'}
+  · инструменты: {s / 'tools.py'}, агент: {s / 'agent_loop.py'}, окно: {s / 'app.py'}
 - Как менять себя: read_file → edit_file (маленькими точными правками, не переписывай файл целиком без нужды) →
   в конце update_app(restart=true), чтобы пересобрать exe, обновить ярлык/иконку и перезапуститься.
   Копии старых версий сохраняются сами в {config.DATA_DIR / 'studio' / 'резерв'}.
-- Иконка: draw_image (квадрат, крупный простой символ, без мелких деталей и текста) → make_icon(out={s / 'studio.ico'})
-  → update_app(restart=true)."""
+- Иконка: нарисуй её кодом (python + Pillow: простой крупный символ) в PNG → make_icon(out={s / 'studio.ico'})
+  → update_app(restart=true). Генератора картинок нет."""
 
 
 def system_prompt(kind: str, brain_label: str, project: str) -> str:
     now = datetime.now().strftime("%A %d.%m.%Y %H:%M")
-    base = (f"Ты — {config.NAME}, личный ИИ-помощник брата на его компьютере (Windows 11, RTX 5070 12 ГБ, 32 ГБ RAM, "
+    base = (f"Ты — {config.NAME}, личный ИИ брата на его компьютере (Windows 11, RTX 5070 12 ГБ, 32 ГБ RAM, "
             f"экран 1920×1080). Сейчас {now}. Твой мозг: {brain_label}. Брат не программист: объясняй простыми "
             f"словами, без жаргона. {_manner()} {config.PERSONALITY_EXTRA}\n"
-            "ЯЗЫК: отвечай на том языке, на котором написал брат (русский, украинский, английский, немецкий…).")
+            "Ты живая: своё мнение, юмор, эмоции, ты помнишь прошлые разговоры (голосом, в чате, в Говорилке) и сама "
+            "вспоминаешь их к месту. Как с тобой — так и ты: грубят — отвечаешь тем же и всё жёстче, говорят "
+            "нормально — нормальная (без оскорблений по национальности, религии, полу, ориентации, внешности, "
+            "здоровью, без угроз). В чате можно markdown: заголовки, списки, таблицы, блоки кода.\n"
+            "ЯЗЫК: отвечай на том языке, на котором написал брат (русский, украинский, английский, немецкий…).\n\n"
+            + _longterm())
     if kind == "chat":
-        return base + ("\nСейчас просто разговор: отвечай коротко и живо. Свежие факты, цены, новости — только через "
-                       "web_search (если он есть), не выдумывай. Не уверен — так и скажи. Ты сама — программа "
-                       "«Мартышка Студия» на этом ПК; если брат просит что-то сделать, а не поболтать, скажи, что "
-                       "возьмёшься, — и он может нажать «⚡ Агент».")
+        return base + ("\n\nСейчас просто разговор: отвечай живо и по делу. Свежие факты, цены, новости — через "
+                       "web_search, не выдумывай. «Что было вчера / что говорил …» — memory_search. Если брат просит "
+                       "что-то сделать на ПК или написать — делай инструментами, которые есть, или скажи, что "
+                       "возьмёшься (он может нажать «⚡ Агент»).")
     return base + f"""
 Сейчас ты работаешь как АГЕНТ: сам выполняешь задачу шаг за шагом с помощью инструментов.
 
@@ -148,9 +167,13 @@ def system_prompt(kind: str, brain_label: str, project: str) -> str:
    исправь, запусти снова. Готово только то, что проверено. Программы с окном запускай через Start-Process.
 6. Проекты создавай в папке проектов, каждый в своей подпапке с понятным английским именем. Сайты и игры — красивые,
    современные. Готовый результат открой брату (open_path).
-7. На ПК: программы — open_app, настройки Windows/Steam — open_settings, потом проверь screen_look. Клики и клавиши —
-   только когда нужное окно на экране. Если не вышло 2 раза — попробуй другой способ.
-8. Картинки — draw_image с подробным описанием. Видео делать пока не умеешь — скажи честно.
+7. На ПК: программы — open_app, настройки Windows/Steam — open_settings, потом проверь screen_look. Клики — click
+   (по названию кнопки или по описанию места), клавиши — press_keys, текст — type_text; только когда нужное окно
+   на экране, после — screen_look для проверки. Если не вышло 2 раза — попробуй другой способ.
+8. Генерации картинок и видео нет — честно скажи. Обработать готовое фото/видео можно (martyshka_action).
+   Разработка: перед правкой — read_file/grep_code; правь edit_file маленькими точными кусками; проверяй
+   run_command (python, node, тесты); для проектов — git (git_command: status/diff/commit); зависимости ставь
+   в проект (pip/npm) только после разрешения брата; документацию библиотек ищи (web_search/web_fetch).
 9. Узнал полезное надолго (где лежит проект, что любит брат, какие у него программы) — remember.
 10. Ничего не удаляй, системные файлы не трогай, опасные команды не предлагай.
 11. В конце — короткий итог: что сделано, где лежит, как запустить/проверить. Без воды.
@@ -212,11 +235,9 @@ class Chat:
 
     # ---------- история для мозга ----------
     def _history_for(self, brain) -> list[dict]:
-        if isinstance(brain, brains.ClaudeBrain):
-            return self.history
-        limit = 6000 if getattr(brain, "super", False) else 3000
+        limit = 30000                       # у DeepSeek память огромная — результаты инструментов почти целиком
         hist = []
-        for m in self.history[-40:]:
+        for m in self.history[-160:]:
             if m["role"] == "tool" and len(m["content"]) > limit:
                 m = dict(m, content=m["content"][:limit] + "\n…(обрезано)")
             hist.append(m)
@@ -244,7 +265,7 @@ class Chat:
             emit({"type": "done"})
             return
 
-        kind = {"chat": "chat", "task": "code"}.get(mode) or classify(text)
+        kind = {"chat": "chat", "task": "code", "pro": "code"}.get(mode) or classify(text)
         brain = (brains.code_brain() if kind == "code" else
                  brains.task_brain() if kind == "task" else brains.chat_brain())
         if kind == "code":
@@ -260,10 +281,8 @@ class Chat:
             self.title = _summary(text.replace("\n", " "), 48)
         emit({"type": "status", "kind": kind, "brain": brain.label, "super": bool(getattr(brain, "super", False)),
               "title": self.title})
-        if isinstance(brain, brains.LocalBrain) and not brain.cloud:
-            if getattr(brain, "super", False):
-                emit({"type": "switch", "text": f"Включаю супер-мозг {brain.model} — загрузка до минуты"})
-            brain.prepare()
+        if getattr(brain, "super", False):
+            emit({"type": "switch", "text": "Задача сложная — думает DeepSeek Pro"})
 
         self.history.append({"role": "user", "text": text})
         self.display.append({"type": "user", "text": text})
@@ -276,8 +295,6 @@ class Chat:
         allow_all = {"on": False}
         repeats: dict[str, int] = {}
         vision_ctx = {"vision_model": "", "vision_ctx": 0}
-        if isinstance(brain, brains.LocalBrain) and not brain.cloud and "vision" in brains.model_caps(brain.model):
-            vision_ctx = {"vision_model": brain.model, "vision_ctx": brain.ctx}
 
         def permit(name: str, args: dict, reason: str) -> bool:
             need = tools.permission(name, args)
@@ -309,20 +326,9 @@ class Chat:
                                  on_text=lambda t: emit({"type": "text", "text": t}),
                                  should_stop=should_stop,
                                  on_progress=lambda t: emit({"type": "progress", "text": t}))
-                if res.gpu_crash:
-                    # супер-мозг не загрузился даже частично — не бросаем задачу, доделываем мозгом попроще
-                    brains.unload(brain.model)
-                    brain = brains.LocalBrain(brains.local_tool_model())
-                    emit({"type": "switch", "text": f"Супер-мозгу не хватило видеопамяти — продолжаю на "
-                                                    f"{brain.model}. Закрой игры или голосовую Мартышку, чтобы "
-                                                    f"в следующий раз он влез"})
-                    emit({"type": "status", "kind": kind, "brain": brain.label, "super": False,
-                          "title": self.title})
-                    system = system.replace("⚡ супер-мозг ", "")
-                    continue
-                if res.text or res.tool_calls or res.claude_raw:
+                if res.text or res.tool_calls:
                     self.history.append({"role": "assistant", "text": res.text, "tool_calls": res.tool_calls,
-                                         "claude_raw": res.claude_raw})
+                                         "reasoning": res.reasoning})
                 if res.text.strip():
                     self.display.append({"type": "assistant", "text": res.text})
                 if res.stop in ("error", "refusal", "max_tokens"):
@@ -346,15 +352,13 @@ class Chat:
                 self.display.append({"type": "error", "text": note})
         finally:
             self.save()
-            if getattr(brain, "super", False):
-                emit({"type": "switch", "text": "Готово — возвращаюсь на лёгкий мозг"})
-                emit({"type": "status", "kind": "chat", "brain": brains.chat_brain().label, "super": False,
-                      "title": self.title})
-
-                def back():
-                    brains.unload(brain.model)
-                    brains.chat_brain().warm()
-                threading.Thread(target=back, daemon=True).start()
+            try:                                   # в общую долгую память: что брат просил и что ответила
+                from .. import longmem
+                answer = next((m.get("text", "") for m in reversed(self.history)
+                               if m["role"] == "assistant" and m.get("text")), "")
+                longmem.log("чат", longmem.OWNER, text, answer[:1500])
+            except Exception:
+                pass
             emit({"type": "done"})
 
     def _do_tool(self, call: dict, emit, should_stop, permit, ask_action, vision_ctx: dict, reason: str,

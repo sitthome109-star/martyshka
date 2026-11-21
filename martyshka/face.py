@@ -411,6 +411,20 @@ def _face_process(shared: dict, parent_pid: int) -> None:
         def check_parent(self):
             if not psutil.pid_exists(parent_pid):   # основная Мартышка закрылась — закрываемся и мы
                 os._exit(0)
+            # цвет/размер поменяли в настройках чата — подхватываем сразу
+            try:
+                m = SETTINGS_FILE.stat().st_mtime
+            except OSError:
+                return
+            if m != getattr(self, "_prefs_m", m):
+                fresh = _load_settings()
+                if fresh.get("color") and fresh["color"] != prefs["color"]:
+                    prefs["color"] = fresh["color"]
+                if fresh.get("size") and int(fresh["size"]) != prefs["size"]:
+                    prefs["size"] = int(fresh["size"])
+                    self.renderer = OrbRenderer(prefs["size"])
+                    self.layout_window()
+            self._prefs_m = m
 
         def layout_window(self):
             """Окно накрывает и угол, и рабочее место (чтобы волнам было где лететь), но не выходит за экран."""
@@ -507,7 +521,7 @@ def _face_process(shared: dict, parent_pid: int) -> None:
         def orb_center_now(self):
             return active_center() if self.out == 1 else idle_center()
 
-        # Левая кнопка: щёлкнул — меню; зажал и потащил — двигаешь шар. Правая кнопка — тоже меню.
+        # Левая кнопка: щёлкнул — открыть чат; зажал и потащил — двигаешь шар. Правая кнопка — меню.
         def mousePressEvent(self, e):
             if e.button() == Qt.LeftButton:
                 self.press_pos = e.globalPosition()
@@ -530,8 +544,8 @@ def _face_process(shared: dict, parent_pid: int) -> None:
             if self.drag_from is not None:      # перетащили — запоминаем место
                 self.drag_from = None
                 save()
-            elif getattr(self, "press_pos", None) is not None:   # просто щёлкнули — меню
-                self.show_menu(e.globalPosition().toPoint())
+            elif getattr(self, "press_pos", None) is not None:   # просто щёлкнули — чат
+                self.open_chat()
             self.press_pos = None
 
         def contextMenuEvent(self, e):
@@ -540,6 +554,13 @@ def _face_process(shared: dict, parent_pid: int) -> None:
         def show_menu(self, pos):
             self.last_active = time.perf_counter()
             menu = QMenu(self)
+            menu.setStyleSheet("QMenu{background:#11131a;color:#e8ecf5;border:1px solid #2a2f3d;border-radius:10px;"
+                               "padding:6px}QMenu::item{padding:7px 22px;border-radius:6px}"
+                               "QMenu::item:selected{background:#243049}QMenu::separator{height:1px;"
+                               "background:#262b38;margin:5px 8px}")
+            chat = menu.addAction("💬  Открыть чат")
+            chat.triggered.connect(self.open_chat)
+            menu.addSeparator()
             colors = menu.addMenu("Цвет")
             group = QActionGroup(colors)
             for name in config.FACE_COLORS:
@@ -555,10 +576,10 @@ def _face_process(shared: dict, parent_pid: int) -> None:
             back = menu.addAction("Вернуть на место по умолчанию")
             back.triggered.connect(lambda: (prefs.update(center=None), save(), self.layout_window()))
             menu.addSeparator()
-            settings = menu.addAction("Настройки…")
+            settings = menu.addAction("⚙  Настройки…")
             settings.triggered.connect(self.open_settings)
             in_game = shared["state"].value == STATE_CODES["game"]
-            game = QAction("Режим игр (освободить видеокарту)", menu, checkable=True, checked=in_game)
+            game = QAction("Тихий режим (не слушать, кроме «конец игр»)", menu, checkable=True, checked=in_game)
             game.triggered.connect(lambda: setattr(shared["game_req"], "value", shared["game_req"].value + 1))
             menu.addAction(game)
             log = menu.addAction("Журнал разговора")
@@ -572,20 +593,15 @@ def _face_process(shared: dict, parent_pid: int) -> None:
             quit_act.triggered.connect(self.quit_all)
             menu.exec(pos)
 
-        def open_settings(self):
-            from .settings_ui import open_settings
-
-            def live(key, value):          # цвет и размер шара — меняем сразу
-                if key == "FACE_COLOR":
-                    prefs["color"] = value; save()
-                elif key == "FACE_SIZE":
-                    self.set_size(int(value))
-
-            def restart():
-                shared["restart"].value = 1   # основная Мартышка перезапустится с новыми настройками
-
+        def open_chat(self):
+            from . import system
             self.last_active = time.perf_counter()
-            open_settings(None, on_live_change=live, on_restart=restart)
+            system.open_chat("chat")
+
+        def open_settings(self):
+            from . import system
+            self.last_active = time.perf_counter()
+            system.open_chat("settings")       # все настройки теперь в окне чата (сверху «Настройки»)
 
         def open_log(self):
             from . import system

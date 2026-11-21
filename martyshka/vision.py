@@ -1,7 +1,7 @@
 """
 ГЛАЗА И РУКИ НА ЭКРАНЕ.
 
-Глаза: снимок экрана → мозг gemma4 (он умеет смотреть на картинки) отвечает, что видит: «что у меня на экране?»,
+Глаза: снимок экрана → DeepSeek flash (он видит картинки) отвечает, что видит: «что у меня на экране?»,
 «что за ошибка?», «прочитай, что тут написано».
 
 Мышка: «нажми Сохранить» — сначала спрашиваем саму Windows (служба специальных возможностей знает кнопки обычных
@@ -59,15 +59,12 @@ CTX_OVERRIDE: int = 0
 
 
 def _see(prompt: str, img, max_tokens: int = 400, temperature: float = 0.2) -> str:
-    import ollama
-    model = MODEL_OVERRIDE or config.MODEL
-    extra = {"think": False} if model.lower().startswith(("qwen3", "gemma4")) else {}
+    from . import deepseek
     imgs = img if isinstance(img, list) else [img]
-    r = ollama.Client().chat(model=model, keep_alive=config.KEEP_ALIVE, **extra,
-                             messages=[{"role": "user", "content": prompt, "images": [_png(i) for i in imgs]}],
-                             options={"num_ctx": CTX_OVERRIDE or config.CONTEXT_SIZE, "temperature": temperature,
-                                      "num_predict": max_tokens})
-    return r["message"]["content"].strip()
+    msg = deepseek.complete([{"role": "user", "content": [{"type": "text", "text": prompt}]
+                              + [deepseek.image_part(_png(i)) for i in imgs]}],
+                            model=deepseek.FLASH, temperature=temperature, max_tokens=max_tokens)
+    return (msg.get("content") or "").strip()
 
 
 def look(question: str = "") -> str:

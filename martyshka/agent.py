@@ -72,8 +72,7 @@ THOUGHT_RE = re.compile(r"Мысль\s*:\s*(.+)", re.IGNORECASE)
 
 def run_task(goal: str, confirm_fn, progress=None, max_steps: int = 10) -> str:
     """Выполнить задачу по шагам. progress(текст) — сообщать брату ход работы. Возвращает итог."""
-    import ollama
-    from . import hands, vision
+    from . import deepseek, hands, vision
     from .hands import ACTION_RE, actions_help, parse_action
     say = progress or (lambda _t: None)
     # быстрый путь: «перейти в настройки кс», «открыть загрузки стима» — прямой ссылкой, без кликов
@@ -85,8 +84,6 @@ def run_task(goal: str, confirm_fn, progress=None, max_steps: int = 10) -> str:
             return said
     except Exception:
         pass
-    client = ollama.Client()
-    extra = {"think": False} if config.MODEL.lower().startswith(("qwen3", "gemma4")) else {}
     system = style.adapt(AGENT_RULES.format(name=config.NAME, actions=actions_help()))
     log: list[str] = []
     repeats: dict = {}
@@ -97,11 +94,11 @@ def run_task(goal: str, confirm_fn, progress=None, max_steps: int = 10) -> str:
         user = (f"ЗАДАЧА: {goal}\n\nУже сделано:\n" + ("\n".join(log[-8:]) if log else "пока ничего") +
                 f"\n\n{wins}\n\n(Это твой ход №{step}, осталось ходов: {max_steps - step}.) Снимок экрана приложен.\n"
                 "СНАЧАЛА проверь по снимку: задача УЖЕ выполнена? Если да — ответь только [ГОТОВО: …] и ничего не нажимай.")
-        r = client.chat(model=config.MODEL, keep_alive=config.KEEP_ALIVE, **extra,
-                        messages=[{"role": "system", "content": system},
-                                  {"role": "user", "content": user, "images": [vision._png(img)]}],
-                        options={"num_ctx": config.CONTEXT_SIZE, "temperature": 0.3, "num_predict": 300})
-        text = r["message"]["content"]
+        msg = deepseek.complete([{"role": "system", "content": system},
+                                 {"role": "user", "content": [{"type": "text", "text": user},
+                                                              deepseek.image_part(vision._png(img))]}],
+                                model=deepseek.FLASH, temperature=0.3, max_tokens=500)
+        text = msg.get("content") or ""
         thought = THOUGHT_RE.search(text)
         stop = STOP_RE.search(text)
         acts = [parse_action(b) for b in ACTION_RE.findall(text)]

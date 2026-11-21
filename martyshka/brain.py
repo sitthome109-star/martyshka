@@ -1,6 +1,6 @@
 """
 МОЗГ МАРТЫШКИ
-Отправляет твою фразу локальной модели (через Ollama) и возвращает ответ по кусочкам,
+Отправляет твою фразу мозгу DeepSeek (в облаке, см. deepseek.py) и возвращает ответ по кусочкам,
 чтобы голос мог начать говорить, не дожидаясь конца ответа.
 
 Из ответа вылавливаются служебные метки (брат их не видит и не слышит):
@@ -14,14 +14,15 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Iterator
 
-import ollama
 
-from . import calc, config, style
+from . import calc, config, deepseek, longmem, style
 from .hands import ACTION_RE, APP_ALIASES, SITES, parse_action
 from .memory import Memory
 from .personality import build_system_prompt
 
 TAG_RE = re.compile(r"\[\s*(ЗАПОМНИ|ЗАБУДЬ)\s*:\s*(.+?)\s*\]", re.IGNORECASE | re.DOTALL)
+TONE_RE = re.compile(r"\[\s*ТОН\s*:\s*(\d)\s*\]", re.IGNORECASE)
+ABOUT_RE = re.compile(r"\[\s*ЗАПОМНИ\s+О\s*:\s*([^|\]]+?)\s*\|\s*(.+?)\s*\]", re.IGNORECASE | re.DOTALL)
 
 # Свежее напоминание к каждой фразе брата (в историю не сохраняется): на каком языке отвечать.
 # Язык определяют уши по голосу; модель любит подражать своим прошлым ответам — поэтому напоминаем каждый раз.
@@ -231,7 +232,10 @@ class MemoryChanges:
 class Brain:
     def __init__(self, memory: Memory | None = None):
         self.memory = memory or Memory()
-        self.client = ollama.Client()
+        self.client = deepseek.Client()
+        self.model = deepseek.normalize(config.MODEL)   # какой DeepSeek думает над текущей фразой
+        self.source = "голос"                          # где идёт разговор (голос / telegram / чат) — для памяти
+        longmem.start_background()
         self.last_changes = MemoryChanges()
         self.last_actions: list[tuple[str, list[str]]] = []
         self.pending_say = ""
@@ -242,15 +246,15 @@ class Brain:
 
     @staticmethod
     def _think() -> dict:
-        """Модели, которые умеют «думать вслух» (Qwen), — без этого: голосовому помощнику важна скорость."""
-        return {"think": False} if config.MODEL.lower().startswith(("qwen3", "deepseek-r1", "gpt-oss", "gemma4")) else {}
+        """В голосовом разговоре мозг не «думает вслух» — важна скорость. Сложное отвечает сильный мозг (pro)."""
+        return {"think": False}
 
     def _options(self, **extra) -> dict:
-        return {"num_ctx": config.CONTEXT_SIZE, "temperature": config.TEMPERATURE, **extra}
+        return {"temperature": config.TEMPERATURE, "num_predict": 1500, **extra}
 
     def _messages(self, user_text: str | None = None, extra_system: str | None = None,
                   history_n: int | None = None) -> list[dict]:
-        msgs = [{"role": "system", "content": build_system_prompt(self.memory.fact_texts())}]
+        msgs = [{"role": "system", "content": build_system_prompt(self.memory.fact_texts(), source=self.source)}]
         hist = []
         for m in self.memory.recent_history():
             # Метки дел из прошлых ответов модели НЕ показываем — иначе она повторяет старые дела
@@ -281,25 +285,30 @@ class Brain:
         return msgs
 
     def warm_up(self) -> None:
-        """Заранее загружает модель в видеокарту, чтобы первый ответ был быстрым."""
-        # Важно: те же настройки, что и в разговоре, иначе Ollama перезагрузит модель на первом вопросе.
-        # Заодно «прочитываем» инструкцию с характером — Ollama её запомнит, и первый ответ будет быстрым.
-        self.client.chat(model=config.MODEL, **self._think(), messages=self._messages("привет"),
-                         keep_alive=config.KEEP_ALIVE, options=self._options(num_predict=1))
+        """Мозг в облаке — грузить нечего. Только проверяем ключ."""
+        if not deepseek.ready():
+            raise RuntimeError("Нет ключа DeepSeek — вставь его в настройках (раздел «Мозг»).")
 
     def unload(self) -> None:
-        """Режим игр: выгрузить мозг из видеокарты."""
-        try:
-            self.client.generate(model=config.MODEL, prompt="", keep_alive=0)
-        except Exception:
-            pass
+        """Режим игр: мозг в облаке, видеокарту не занимает."""
 
     def reply(self, user_text: str, lang: str = "ru") -> Iterator[str]:
         """Отвечает на фразу брата. Выдаёт текст кусочками (без служебных меток).
         lang — язык, на котором говорит брат (ru/de/en/uk): на нём и отвечаем.
         После окончания: self.last_actions — что попросили сделать руками, self.last_changes — память."""
         try:
-            yield from self._reply(user_text, lang)
+            if self.source == "голос":
+                yield from self._reply(user_text, lang)
+            else:                                    # текстом (Telegram, чат) метки эмоций {…} не показываем
+                from .voice import CueFilter
+                cf = CueFilter()
+                for piece in self._reply(user_text, lang):
+                    out = cf.feed(piece)
+                    if out:
+                        yield out
+                tail = cf.flush()
+                if tail:
+                    yield tail
         finally:
             if self.last_actions:   # запоминаем, что делали — чтобы понимать «закрой его», «ещё», «обратно»
                 now = time.time()
@@ -322,6 +331,7 @@ class Brain:
 
     def _reply(self, user_text: str, lang: str = "ru") -> Iterator[str]:
         self.lang = lang if lang in LANG_REMINDERS else "ru"
+        self.model = deepseek.pick(user_text)     # простое → flash (быстро), сложное → pro (умнее)
         self.last_changes = MemoryChanges()
         self.last_actions = []
         self.pending_say = ""   # фраза, которую надо сказать ПОСЛЕ выполнения дела
@@ -349,16 +359,6 @@ class Brain:
             self.memory.add_message("user", user_text)
             self.memory.add_message("assistant", "[ДЕЛО: зайти] Открываю.")
             yield style.phrase("done") if style.is_jarvis() else "Ща, открываю."
-            return
-        # «Нарисуй …» — прямо в генератор словами брата (мозг иногда переписывал или отказывался)
-        dm = DRAW_RE.match(user_text.strip())
-        if dm and not re.search(r"\b(по\s+(этому|этой|моему|моей)?\s*фот\w*|эт\w+\s+фот\w*|с\s+фот\w*|из\s+фот\w*|"
-                                r"видео|exe|игр\w*)\b", user_text, re.I):
-            desc = dm.group(1).strip(" .!")
-            self.last_actions = [("нарисуй", [desc])]
-            self.memory.add_message("user", user_text)
-            self.memory.add_message("assistant", f"[ДЕЛО: нарисуй | {desc}] Рисую.")
-            yield "Рисую, пару секунд." if not style.is_jarvis() else "Приступаю к изображению."
             return
         # EXE: «сделай exe из змейки» / «сделай игру гонки и собери exe»
         if EXE_RE.search(user_text):
@@ -447,6 +447,12 @@ class Brain:
             prompt_text += f"\n\n(Служебно: точный ответ — {exact}. Назови именно это число, словами, сам не пересчитывай.)"
         full = yield from self._stream(self._messages(prompt_text), user_text)
         self.last_changes = self._apply_memory_tags(full)
+        tone = TONE_RE.search(full)
+        if tone:
+            longmem.set_anger(longmem.OWNER, int(tone.group(1)))
+        for who, fact in ABOUT_RE.findall(full):
+            if longmem.remember_about(who, fact):
+                self.last_changes.remembered.append(f"{who}: {fact}")
         self.last_actions = [parse_action(body) for body in ACTION_RE.findall(full)]
         if TRANSLATE_TEXT_RE.search(user_text):
             self.last_actions = []
@@ -531,7 +537,7 @@ class Brain:
                 "нет — ответь одним словом: НЕТ.")
         msgs = [{"role": "system", "content": build_system_prompt([])},
                 {"role": "user", "content": style.adapt(note)}]
-        r = self.client.chat(model=config.MODEL, **self._think(), messages=msgs, keep_alive=config.KEEP_ALIVE,
+        r = self.client.chat(model=self.model, **self._think(), messages=msgs, keep_alive=config.KEEP_ALIVE,
                              options=self._options(num_predict=150, temperature=0.3))
         return [parse_action(body) for body in ACTION_RE.findall(r["message"]["content"])][:3]
 
@@ -539,17 +545,18 @@ class Brain:
         """Перевести шаг своей команды («открой стим») в дела. Без разговора и без истории."""
         msgs = [{"role": "system", "content": build_system_prompt([])},
                 {"role": "user", "content": step + "\n\n(Служебно: только метки дел, никаких слов.)"}]
-        r = self.client.chat(model=config.MODEL, **self._think(), messages=msgs, keep_alive=config.KEEP_ALIVE,
+        r = self.client.chat(model=self.model, **self._think(), messages=msgs, keep_alive=config.KEEP_ALIVE,
                              options=self._options(num_predict=120, temperature=0.2))
         return [parse_action(body) for body in ACTION_RE.findall(r["message"]["content"])]
 
     def complete_raw(self, system: str, prompt: str, max_tokens: int, num_ctx: int) -> str:
         """Большая служебная работа (код игры): своя инструкция и увеличенная «рабочая память».
         После неё мозг сам перезагрузится с обычной памятью на следующем вопросе."""
-        r = self.client.chat(model=config.MODEL, **self._think(), keep_alive=config.KEEP_ALIVE,
-                             messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-                             options={"num_ctx": num_ctx, "temperature": 0.3, "num_predict": max_tokens})
-        return r["message"]["content"]
+        # код игр и большие работы — всегда сильный мозг, который сначала думает
+        msg = deepseek.complete([{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+                                model=deepseek.PRO, think=True, effort="high",
+                                max_tokens=max(max_tokens * 3, 32000))
+        return msg.get("content") or ""
 
     def briefing(self, facts: str) -> Iterator[str]:
         """Утренняя сводка: поздороваться и коротко рассказать погоду, напоминания, заряд."""
@@ -568,7 +575,7 @@ class Brain:
 
     def complete(self, prompt: str, max_tokens: int = 1500) -> str:
         """Служебная просьба к мозгу (составить таблицу, написать текст) — без характера и без истории."""
-        r = self.client.chat(model=config.MODEL, **self._think(), keep_alive=config.KEEP_ALIVE,
+        r = self.client.chat(model=self.model, **self._think(), keep_alive=config.KEEP_ALIVE,
                              messages=[{"role": "system", "content": "Ты аккуратный помощник. Отвечай строго в "
                                         "запрошенном формате, без пояснений и без markdown."},
                                        {"role": "user", "content": prompt}],
@@ -577,7 +584,7 @@ class Brain:
 
     # --- общая часть ---
     def _stream(self, messages: list[dict], user_text: str | None) -> Iterator[str]:
-        stream = self.client.chat(model=config.MODEL, **self._think(), messages=messages, stream=True,
+        stream = self.client.chat(model=self.model, **self._think(), messages=messages, stream=True,
                                   keep_alive=config.KEEP_ALIVE, options=self._options())
         full = ""      # весь ответ модели как есть
         shown = 0      # сколько символов уже отдали наружу
@@ -593,7 +600,7 @@ class Brain:
                     shown = safe_end
             # Ответ закончился: убираем метки, остальной текст отдаём
             visible_tail = ANY_TAG_RE.sub("", full[shown:]).strip()
-            if shown == 0 and ACTION_RE.match(full.lstrip()):
+            if shown == 0 and ACTION_RE.match(TONE_RE.sub("", full).lstrip()):
                 # Ответ начался с метки дела: фразу НЕ озвучиваем сразу —
                 # сначала программа выполнит дело, потом скажет её (self.pending_say)
                 self.pending_say = visible_tail
@@ -615,7 +622,12 @@ class Brain:
             if user_text is not None and saved:
                 self.memory.add_message("user", user_text)
             if saved:
+                saved = TONE_RE.sub("", saved).strip()
                 self.memory.add_message("assistant", saved)
+            try:
+                longmem.log(self.source, longmem.OWNER, user_text or "", ANY_TAG_RE.sub("", full).strip())
+            except Exception:
+                pass
         return full
 
     def reply_text(self, user_text: str) -> str:

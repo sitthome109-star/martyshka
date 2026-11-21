@@ -1,5 +1,5 @@
 """
-СЛУЖЕБНОЕ: журнал, «только одна Мартышка», окошки с ошибками, ярлыки, автозапуск, иконка, Ollama.
+СЛУЖЕБНОЕ: журнал, «только одна Мартышка», окошки с ошибками, ярлыки, автозапуск, иконка, открыть чат.
 """
 import ctypes
 import functools
@@ -93,31 +93,92 @@ def restart_self() -> None:
     os._exit(0)
 
 
-# ---------- Ollama ----------
-def ensure_ollama(timeout: float = 90) -> bool:
-    """Ждём, пока Ollama (мозг) будет готова. Если не запущена — запускаем сами."""
-    import ollama
-    started = False
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            ollama.Client().list()
-            return True
-        except Exception:
-            if not started:
-                exe = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama app.exe"
-                if not exe.exists():
-                    exe = exe.with_name("ollama.exe")
-                try:
-                    if exe.name == "ollama.exe":
-                        subprocess.Popen([str(exe), "serve"], creationflags=0x08000000)  # без окна
-                    else:
-                        subprocess.Popen([str(exe)])
-                except Exception:
-                    pass
-                started = True
-            time.sleep(2)
+# ---------- голос ↔ чат: одна Мартышка ----------
+def voice_running() -> bool:
+    """Запущена ли голосовая Мартышка (её мьютекс существует)."""
+    h = ctypes.windll.kernel32.OpenMutexW(0x00100000, False, "Local\\MartyshkaAssistant")   # SYNCHRONIZE
+    if h:
+        ctypes.windll.kernel32.CloseHandle(h)
+        return True
     return False
+
+
+def start_voice() -> None:
+    """Запустить голосовую Мартышку (без окна). Сама следит, чтобы копия была одна."""
+    subprocess.Popen([str(PYTHONW), str(MAIN_SCRIPT)], cwd=str(config.PROJECT_DIR), creationflags=0x08000000)
+
+
+def voice_pids() -> list[int]:
+    """Номера процессов именно голосовой Мартышки (martyshka_main.py), не чужие."""
+    pids: list[int] = []
+    try:
+        import psutil
+    except Exception:
+        return pids
+    for pr in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            info = pr.info
+        except Exception:
+            continue
+        if (info.get("name") or "").lower() not in ("python.exe", "pythonw.exe"):
+            continue
+        cmd = " ".join(info.get("cmdline") or [])
+        if "martyshka_main.py" in cmd.replace("\\", "/") and str(pr.pid) != str(os.getpid()):
+            pids.append(pr.pid)
+    return pids
+
+
+def stop_voice(timeout: float = 6.0) -> bool:
+    """Выключить голосовую Мартышку (шар, микрофон, уши). Окно чата остаётся открытым."""
+    import signal
+    pids = voice_pids()
+    if not pids:
+        return True
+    try:
+        import psutil
+        for pid in pids:
+            try:
+                psutil.Process(pid).terminate()          # вежливо: Windows закроет окно шара
+            except Exception:
+                pass
+        for _ in range(int(timeout * 4)):
+            if not voice_pids():
+                return True
+            time.sleep(0.25)
+        for pid in voice_pids():                        # не закрылась — снимаем окончательно
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return not voice_pids()
+
+
+CHAT_FLAG = config.DATA_DIR / "studio" / "показать.flag"
+
+
+def chat_running() -> bool:
+    h = ctypes.windll.kernel32.OpenMutexW(0x00100000, False, "MartyshkaStudioSingleton")
+    if h:
+        ctypes.windll.kernel32.CloseHandle(h)
+        return True
+    return False
+
+
+def open_chat(tab: str = "chat") -> None:
+    """Показать окно чата (из шара Мартышки). Уже открыт — просто выходит вперёд; нет — запускаем."""
+    CHAT_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    if chat_running():
+        CHAT_FLAG.write_text(tab or "chat", encoding="utf-8")
+        return
+    subprocess.Popen([str(PYTHONW), str(config.PROJECT_DIR / "studio.py"), "--tab", tab or "chat"],
+                     cwd=str(config.PROJECT_DIR), creationflags=0x08000000)
+
+
+def ensure_ollama(timeout: float = 0) -> bool:
+    """Мозг теперь DeepSeek в облаке — Ollama не нужна."""
+    return True
 
 
 # ---------- ярлыки ----------
@@ -143,19 +204,49 @@ def _special_folder(name: str) -> Path:
     return Path(r.stdout.decode("utf-8").strip())
 
 
+STUDIO_EXE = config.PROJECT_DIR / "Мартышка Студия.exe"
+STUDIO_SCRIPT = config.PROJECT_DIR / "studio.py"
+STUDIO_SHORTCUT_NAME = "Мартышка Студия.lnk"
+STUDIO_ICON = config.PROJECT_DIR / "martyshka" / "studio" / "studio.ico"
+STARTUP_VOICE_NAME = "Мартышка.lnk"          # старый ярлык: он поднимал голосовую Мартышку — больше не нужен
+
+
 def startup_shortcut() -> Path:
-    return _special_folder("Startup") / SHORTCUT_NAME
+    return _special_folder("Startup") / STUDIO_SHORTCUT_NAME
 
 
 def autostart_enabled() -> bool:
     return startup_shortcut().exists()
 
 
+def _make_chat_shortcut(path: Path) -> bool:
+    """Ярлык на ЧАТ (Студию), а не на голосовую Мартышку."""
+    exe = STUDIO_EXE if STUDIO_EXE.exists() else PYTHONW
+    args = "" if STUDIO_EXE.exists() else f'"{STUDIO_SCRIPT}"'
+    icon = STUDIO_ICON if STUDIO_ICON.exists() else ICON_FILE
+    ps = (
+        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:MT_LNK);"
+        "$s.TargetPath=$env:MT_TARGET;$s.Arguments=$env:MT_ARGS;$s.WorkingDirectory=$env:MT_DIR;"
+        "$s.IconLocation=$env:MT_ICON;$s.Description='Мартышка — чат';$s.Save()"
+    )
+    env = dict(os.environ, MT_LNK=str(path), MT_TARGET=str(exe), MT_ARGS=args,
+               MT_DIR=str(config.PROJECT_DIR), MT_ICON=str(icon))
+    r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], env=env, capture_output=True,
+                       creationflags=0x08000000)
+    return r.returncode == 0 and path.exists()
+
+
 def set_autostart(on: bool) -> bool:
-    """Включить/выключить запуск Мартышки вместе с Windows."""
+    """Включить/выключить запуск ЧАТА вместе с Windows.
+
+    Голосовая Мартышка (шар, микрофон) сама больше не поднимается: её включает
+    кнопка «Голос» в окне чата. Старый ярлык голоса убираем.
+    """
     lnk = startup_shortcut()
+    old_voice = _special_folder("Startup") / STARTUP_VOICE_NAME
+    old_voice.unlink(missing_ok=True)
     if on:
-        return _make_shortcut(lnk, "--autostart")
+        return _make_chat_shortcut(lnk)
     lnk.unlink(missing_ok=True)
     return True
 

@@ -1050,6 +1050,23 @@ def battery_info(_: str = "") -> Result:
     return Result(briefing.battery_text(), info=True)
 
 
+def recall(question: str = "") -> Result:
+    """Вспомнить из долгой памяти: что было в какой-то день, что говорил кто-то, о чём договаривались."""
+    from datetime import date, timedelta
+    from . import longmem
+    q = (question or "").lower()
+    when = None
+    if "позавчера" in q:
+        when = date.today() - timedelta(days=2)
+    elif "вчера" in q:
+        when = date.today() - timedelta(days=1)
+    elif "сегодня" in q:
+        when = date.today()
+    if when is not None:
+        return Result(f"Память за {when.isoformat()}:\n" + longmem.day_text(when), info=True)
+    return Result("Нашлось в памяти:\n" + longmem.search(question), info=True)
+
+
 def briefing_info(_: str = "") -> Result:
     from . import briefing
     return Result(briefing.collect(), info=True)
@@ -1745,9 +1762,9 @@ ACTIONS = {   # описания короткие: они идут в инстр
                      "ч/б, ярче, в png, в стиле …> | <файл, обычно пусто>"),
     "видео": (_video, "видео | <что: обрезать с 10 по 30 секунду, убрать звук, вытащить звук в mp3, сжать, гиф, "
                       "кадр, повернуть, ускорить, заменить фон> | <файл, обычно пусто>"),
-    "нарисуй": (_draw, "нарисуй | <подробное описание картинки>"),
     "заряд": (battery_info, "заряд  — мышка, наушники, клавиатура"),
     "сводка": (briefing_info, "сводка  — погода, напоминания, заряд"),
+    "вспомнить": (recall, "вспомнить | <что вспомнить: вчера, 15 ноября, что говорил Enbulih про …>"),
     "таблица": (make_table, "таблица | <тема> | <столбцы>  — собрать в Excel по данным из интернета"),
     "документ": (make_document, "документ | <тема> | <пожелания>  — написать в Word (реферат, статья…)"),
 }

@@ -2,7 +2,7 @@
 ИНСТРУМЕНТЫ АГЕНТА СТУДИИ («коннекторы»).
 
 Каждый инструмент: описание для мозга (TOOLS) + исполнитель (run_tool). Инструменты сгруппированы в коннекторы
-(Интернет, Файлы, Команды, Управление ПК, Картинки, Дела Мартышки, Память) — их можно выключать в окне.
+(Интернет, Файлы, Разработка, Команды, Управление ПК, Дела Мартышки, Память) — их можно выключать в окне.
 
 Разрешения (окно «Мартышка спрашивает»):
   - файлы внутри папки проектов — свободно; вне её — спросить (можно «всё в этой папке»);
@@ -60,9 +60,9 @@ I = {"type": "integer"}
 GROUPS = {
     "web": ("Интернет", "Поиск и чтение страниц — чтобы не выдумывать факты"),
     "files": ("Файлы", "Читать, создавать и править файлы, искать по ПК"),
-    "shell": ("Команды", "PowerShell: запуск программ и скриптов, pip, git"),
+    "dev": ("Разработка", "Поиск по коду, git, Python, проверка сайтов и программ, запросы к API, фоновые серверы"),
+    "shell": ("Команды", "PowerShell: запуск программ и скриптов, pip, npm"),
     "pc": ("Управление ПК", "Смотреть на экран, кликать, печатать, открывать программы и настройки"),
-    "images": ("Картинки", "Генератор картинок на этом ПК"),
     "hands": ("Дела Мартышки", "Громкость, напоминания, погода, окна и другие привычные дела"),
     "memory": ("Память", "Запоминать, где что лежит и что брат любит"),
 }
@@ -95,8 +95,43 @@ TOOLS = [
      "description": "Создать или перезаписать текстовый файл целиком. Путь без диска — внутри папки проектов.",
      "input_schema": _schema({"path": S, "content": S}, ["path", "content"])},
     {"name": "edit_file", "group": "files",
-     "description": "Заменить в файле кусок old на new. old должен встречаться ровно один раз.",
-     "input_schema": _schema({"path": S, "old": S, "new": S}, ["path", "old", "new"])},
+     "description": "Заменить в файле кусок old на new. old должен встречаться ровно один раз (или replace_all=true "
+                    "— заменить все). Для нескольких правок в одном файле — несколько вызовов.",
+     "input_schema": _schema({"path": S, "old": S, "new": S, "replace_all": {"type": "boolean"}},
+                             ["path", "old", "new"])},
+    {"name": "grep_code", "group": "dev",
+     "description": "Искать по содержимому файлов (регулярное выражение) в папке проекта. glob — какие файлы "
+                    "(например *.py, *.{js,ts}). Возвращает файл:строка: текст. Для поиска функций, мест ошибок.",
+     "input_schema": _schema({"pattern": S, "path": S, "glob": S}, ["pattern"])},
+    {"name": "glob_files", "group": "dev",
+     "description": "Найти файлы по шаблону пути внутри папки (например **/*.py, src/**/*.tsx).",
+     "input_schema": _schema({"pattern": S, "path": S}, ["pattern"])},
+    {"name": "run_python", "group": "dev",
+     "description": "Выполнить кусок Python (из venv Мартышки: есть numpy, PIL, httpx, requests). Для расчётов, "
+                    "проверки кода, обработки файлов, генерации PNG (иконки, графики). Возвращает вывод.",
+     "input_schema": _schema({"code": S, "cwd": S, "timeout_sec": I}, ["code"])},
+    {"name": "git_command", "group": "dev",
+     "description": "Git в папке проекта: status, diff, log, add, commit -m \"…\", init, branch, checkout. "
+                    "args — всё после слова git.",
+     "input_schema": _schema({"args": S, "cwd": S}, ["args"])},
+    {"name": "http_request", "group": "dev",
+     "description": "HTTP-запрос (проверить свой сервер или API): method, url, body (текст/JSON), headers (JSON).",
+     "input_schema": _schema({"method": S, "url": S, "body": S, "headers": S}, ["method", "url"])},
+    {"name": "page_preview", "group": "dev",
+     "description": "Открыть сайт или HTML-файл в невидимом браузере, сделать снимок и посмотреть на него глазами: "
+                    "как выглядит, что сломано, читается ли текст. question — что проверить. Возвращает описание "
+                    "и картинку. Обязательно для проверки сайтов и HTML-игр.",
+     "input_schema": _schema({"target": S, "question": S, "width": I, "height": I}, ["target", "question"])},
+    {"name": "start_background", "group": "dev",
+     "description": "Запустить долгую команду в фоне (dev-сервер, бот, сборка) и сразу вернуть номер. Вывод — "
+                    "background_output. Остановить — background_stop.",
+     "input_schema": _schema({"command": S, "cwd": S}, ["command"])},
+    {"name": "background_output", "group": "dev",
+     "description": "Последний вывод фоновой команды по номеру (и жива ли она).",
+     "input_schema": _schema({"id": I}, ["id"])},
+    {"name": "background_stop", "group": "dev",
+     "description": "Остановить свою фоновую команду по номеру.",
+     "input_schema": _schema({"id": I}, ["id"])},
     {"name": "run_command", "group": "shell",
      "description": "Выполнить команду PowerShell. cwd — папка (по умолчанию папка проектов). Возвращает вывод.",
      "input_schema": _schema({"command": S, "cwd": S, "timeout_sec": I}, ["command"])},
@@ -123,10 +158,6 @@ TOOLS = [
     {"name": "type_text", "group": "pc",
      "description": "Напечатать текст туда, где сейчас курсор (любой язык).",
      "input_schema": _schema({"text": S}, ["text"])},
-    {"name": "draw_image", "group": "images",
-     "description": "Нарисовать картинку генератором на этом ПК. Опиши подробно: сюжет, стиль, свет, ракурс, "
-                    "формат. Возвращает путь к PNG.",
-     "input_schema": _schema({"description": S}, ["description"])},
     {"name": "open_path", "group": "files",
      "description": "Открыть брату файл, папку или ссылку программой по умолчанию.",
      "input_schema": _schema({"path": S}, ["path"])},
@@ -135,9 +166,9 @@ TOOLS = [
                     "заметки, окно, погода, заряд, буфер, скриншот, фото, видео, таблица, документ. "
                     "args — параметры по порядку (например name=громкость, args=[\"50\"]).",
      "input_schema": _schema({"name": S, "args": {"type": "array", "items": S}}, ["name"])},
-    {"name": "make_icon", "group": "images",
-     "description": "Сделать иконку Windows (.ico, все размеры 16–256) из картинки PNG/JPG. Обычно сначала "
-                    "draw_image (квадратная, простой крупный силуэт, контрастный фон), потом make_icon.",
+    {"name": "make_icon", "group": "files",
+     "description": "Сделать иконку Windows (.ico, все размеры 16–256) из картинки PNG/JPG (нарисуй её кодом через "
+                    "run_python + Pillow: простой крупный силуэт, контрастный фон), потом make_icon.",
      "input_schema": _schema({"image": S, "out": S}, ["image", "out"])},
     {"name": "update_app", "group": "files",
      "description": "Применить изменения в САМОЙ Студии: пересобрать «Мартышка Студия.exe» (с иконкой "
@@ -147,19 +178,22 @@ TOOLS = [
     {"name": "govorilka", "group": "pc",
      "description": "Голосовой сервер «Говорилка» брата: action=join — Мартышка заходит туда отдельным участником "
                     "«Мартышка (ИИ)» и общается голосом с людьми и ИИ Морни; leave — выйти; status — сидит ли там; "
-                    "log — что там недавно говорили и что она отвечала; set_voice — сменить голос (value: ryan, aiden, "
-                    "eric, dylan, uncle_fu, serena, vivian, ono_anna, sohee); set_model — сменить мозг (value: имя "
-                    "модели Ollama).",
+                    "log — что там недавно говорили и что она отвечала; set_voice — сменить голос (value: название голоса "
+                    "Fish Audio, например Кира, Артём); set_model — сменить мозг (value: flash или pro).",
      "input_schema": _schema({"action": {"type": "string", "enum": ["join", "leave", "status", "log", "set_voice",
                                                                     "set_model"]}, "value": S}, ["action"])},
+    {"name": "memory_search", "group": "memory",
+     "description": "Поиск в долгой памяти: что было в какой-то день (вчера, 2026-11-19), что говорил человек "
+                    "(в Говорилке, голосом, в чате), о чём договаривались.",
+     "input_schema": _schema({"query": S}, ["query"])},
     {"name": "remember", "group": "memory",
      "description": "Запомнить надолго полезный факт: где лежит проект, как брат любит, какие программы у него "
                     "есть. Коротко, одной фразой.",
      "input_schema": _schema({"fact": S}, ["fact"])},
 ]
 TOOL_GROUP = {t["name"]: t["group"] for t in TOOLS}
-CHAT_TOOL_NAMES = ("web_search", "web_fetch", "open_app", "open_settings", "draw_image", "open_path",
-                   "martyshka_action", "remember", "windows", "govorilka")
+CHAT_TOOL_NAMES = ("web_search", "web_fetch", "open_app", "open_settings", "open_path", "screen_look",
+                   "martyshka_action", "remember", "memory_search", "windows", "govorilka", "run_python")
 
 
 def active_tools(names: tuple[str, ...] | None = None) -> list[dict]:
@@ -184,10 +218,13 @@ ACTIVITY = {
     "run_command": ("exec", "Исполняю команду"), "open_app": ("exec", "Открываю"),
     "open_settings": ("exec", "Открываю настройки"), "windows": ("look", "Смотрю окна"),
     "screen_look": ("look", "Смотрю на экран"), "click": ("exec", "Кликаю"), "press_keys": ("exec", "Нажимаю"),
-    "type_text": ("write", "Печатаю"), "draw_image": ("draw", "Рисую"), "open_path": ("exec", "Открываю"),
-    "martyshka_action": ("exec", "Делаю"), "remember": ("memory", "Запоминаю"),
+    "type_text": ("write", "Печатаю"), "open_path": ("exec", "Открываю"),
+    "martyshka_action": ("exec", "Делаю"), "remember": ("memory", "Запоминаю"), "memory_search": ("memory", "Вспоминаю"),
     "make_icon": ("draw", "Делаю иконку"), "update_app": ("exec", "Обновляю Студию"),
-    "govorilka": ("exec", "Говорилка"),
+    "govorilka": ("exec", "Говорилка"), "grep_code": ("search", "Ищу в коде"), "glob_files": ("search", "Ищу файлы"),
+    "run_python": ("exec", "Запускаю Python"), "git_command": ("exec", "Git"), "http_request": ("exec", "Запрос"),
+    "page_preview": ("look", "Проверяю страницу"), "start_background": ("exec", "Запускаю в фоне"),
+    "background_output": ("read", "Смотрю вывод"), "background_stop": ("exec", "Останавливаю"),
 }
 
 
@@ -212,7 +249,8 @@ def _backup_if_own(p: Path) -> str:
 def label(name: str, args: dict) -> str:
     detail = (args.get("query") or args.get("url") or args.get("path") or args.get("command") or args.get("name")
               or args.get("where") or args.get("question") or args.get("target") or args.get("keys")
-              or args.get("text") or args.get("description") or args.get("fact") or "")
+              or args.get("text") or args.get("description") or args.get("fact") or args.get("pattern")
+              or args.get("args") or args.get("target") or (args.get("code") or "")[:80] or "")
     detail = str(detail).replace("\n", " ")
     if len(detail) > 90:
         detail = detail[:87] + "…"
@@ -258,6 +296,23 @@ def permission(name: str, args: dict) -> dict | None:
         if not safe:
             return {"question": f"Выполнить команду:\n{args['command']}\n\nв папке: {cwd}", "scope": f"cmd:{cwd}",
                     "scope_label": f"все команды в папке «{cwd.name}»"}
+    if name in ("run_python", "start_background"):
+        cwd = _path(args.get("cwd") or str(workspace()))
+        what = (args.get("code") or args.get("command") or "")[:600]
+        if not (config.STUDIO_AUTO_COMMANDS and _inside_ws(cwd)):
+            return {"question": f"{'Запустить Python' if name == 'run_python' else 'Запустить в фоне'}:\n{what}"
+                                f"\n\nв папке: {cwd}", "scope": f"cmd:{cwd}",
+                    "scope_label": f"все команды в папке «{cwd.name}»"}
+    if name == "git_command":
+        cwd = _path(args.get("cwd") or str(workspace()))
+        if re.match(r"\s*(push|reset|clean|rebase|filter|rm\b|checkout\s+--|restore)", args.get("args", ""), re.I) \
+                or not _inside_ws(cwd):
+            return {"question": f"git {args.get('args')}\n\nв папке: {cwd}", "scope": f"git:{cwd}",
+                    "scope_label": f"все git-команды в «{cwd.name}»"}
+    if name == "http_request" and not re.match(r"https?://(localhost|127\.0\.0\.1|\[::1\])", args.get("url", "")) \
+            and (args.get("method") or "GET").upper() != "GET":
+        return {"question": f"Отправить {args.get('method')} на {args.get('url')}", "scope": "http:external",
+                "scope_label": "все запросы в интернет"}
     if name in ("click", "press_keys", "type_text"):
         app = _foreground_app()
         what = {"click": f"Кликнуть: {args.get('target')}", "press_keys": f"Нажать клавиши: {args.get('keys')}",
@@ -382,12 +437,17 @@ def _run(name: str, args: dict, ctx: dict) -> dict:
         p = _path(args["path"])
         text = p.read_text(encoding="utf-8")
         n = text.count(args["old"])
-        if n != 1:
+        if n == 0 or (n > 1 and not args.get("replace_all")):
             return {"text": f"Кусок old найден {n} раз(а), а нужно ровно 1. Прочитай файл и возьми больше "
-                            "соседнего текста.", "ok": False}
+                            "соседнего текста (или replace_all=true).", "ok": False}
         note = _backup_if_own(p)
         p.write_text(text.replace(args["old"], args["new"]), encoding="utf-8")
-        return {"text": f"Исправлено: {p}{note}", "ok": True, "file": str(p)}
+        return {"text": f"Исправлено ({n} место): {p}{note}", "ok": True, "file": str(p)}
+
+    if name in ("grep_code", "glob_files", "run_python", "git_command", "http_request", "page_preview",
+                "start_background", "background_output", "background_stop", "memory_search"):
+        from . import devtools
+        return devtools.run(name, args, _path, workspace)
 
     if name == "make_icon":
         from PIL import Image
@@ -467,28 +527,16 @@ def _run(name: str, args: dict, ctx: dict) -> dict:
 
     if name in ("screen_look", "click"):
         from .. import vision
-        vision.MODEL_OVERRIDE, vision.CTX_OVERRIDE = ctx.get("vision_model", ""), ctx.get("vision_ctx", 0)
-        try:
-            if name == "screen_look":
-                return {"text": "На экране: " + vision.look(args["question"]), "ok": True}
-            text = vision.click(args["target"])
-            return {"text": text, "ok": not re.search(r"не (наш|наход|вид|смог|получ)", text, re.I)}
-        finally:
-            vision.MODEL_OVERRIDE, vision.CTX_OVERRIDE = "", 0
+        if name == "screen_look":
+            return {"text": "На экране: " + vision.look(args["question"]), "ok": True}
+        text = vision.click(args["target"])
+        return {"text": text, "ok": not re.search(r"не (наш|наход|вид|смог|получ)", text, re.I)}
 
     if name == "press_keys":
         return _res(hands.press_keys(args["keys"]))
 
     if name == "type_text":
         return _res(hands.type_text(args["text"]))
-
-    if name == "draw_image":
-        from .. import media
-        res = media.draw(args["description"])
-        path = media.last_file if res.ok else None
-        if not res.ok or path is None:
-            return {"text": res.text, "ok": False}
-        return {"text": f"Готово: {path}", "ok": True, "image": _thumb(path), "file": str(path)}
 
     if name == "open_path":
         target = args["path"].strip()
@@ -523,15 +571,15 @@ def _run(name: str, args: dict, ctx: dict) -> dict:
         if act == "log":
             return {"text": govorilka.recent_log(25) or "Пока ничего не слышала.", "ok": True}
         if act == "set_voice":
-            sp = govorilka.find_speaker(args.get("value", ""))
-            if not sp:
-                return {"text": "Нет такого голоса. Есть: " + ", ".join(govorilka.SPEAKERS), "ok": False}
-            govorilka.save_setting("GOVORILKA_SPEAKER", sp)
-            return {"text": f"Голос в Говорилке: {govorilka.SPEAKERS[sp]}", "ok": True}
+            v = govorilka.find_voice(args.get("value", ""))
+            if not v:
+                return {"text": "Нет такого голоса в каталоге Fish Audio.", "ok": False}
+            govorilka.save_setting("GOVORILKA_VOICE_ID", v["id"])
+            return {"text": f"Голос в Говорилке: {v['title']}", "ok": True}
         if act == "set_model":
             m = govorilka.find_model(args.get("value", ""))
             if not m:
-                return {"text": "Нет такой модели. Есть: " + ", ".join(govorilka.chat_models()), "ok": False}
+                return {"text": "Мозг: flash или pro?", "ok": False}
             govorilka.save_setting("GOVORILKA_MODEL", m)
             return {"text": f"Мозг в Говорилке: {m}", "ok": True}
         return {"text": govorilka.status(), "ok": True}

@@ -25,7 +25,47 @@ from martyshka.brain import Brain, reply_language
 
 
 NO_RECOVER = {"узнать", "погода", "заряд", "сводка", "система", "заметки", "буфер", "питание", "отмена выключения",
-              "экран", "нажать", "клавиши", "команда", "задача", "удалить", "окна", "игра", "доработать игру", "exe"}
+              "экран", "нажать", "клавиши", "команда", "задача", "удалить", "окна", "игра", "доработать игру", "exe",
+              "вспомнить"}
+
+
+def _start_background_watchers() -> None:
+    """1) Настройки поменяли в окне чата — подхватываем на ходу, без перезапуска.
+    2) Сторож Говорилки: бот должен сидеть на сервере всегда (если брат сам не сказал «уйди совсем»)."""
+    def settings_watch():
+        last = None
+        while True:
+            # кнопки «Перезапустить» / «Выключить» в настройках окна чата
+            for flag, act in ((config.DATA_DIR / "перезапуск.flag", "restart"), (config.DATA_DIR / "выключить.flag", "quit")):
+                if flag.exists():
+                    flag.unlink(missing_ok=True)
+                    if act == "restart":
+                        system.restart_self()
+                    os._exit(0)
+            try:
+                m = config.SETTINGS_FILE.stat().st_mtime
+                if last is not None and m != last:
+                    config._apply_settings_file()
+                    status("⚙ Настройки обновлены")
+                last = m
+            except Exception:
+                pass
+            time.sleep(2)
+
+    def govorilka_watch():
+        time.sleep(90)                       # после включения ПК дать всему прогрузиться
+        from martyshka import govorilka
+        while True:
+            try:
+                if (config.GOVORILKA_AUTOSTART and not govorilka.LEFT_FLAG.exists() and not govorilka.is_running()
+                        and config.GOVORILKA_EXE.exists() and govorilka.cable_ready()):
+                    status("🎙 Говорилка: бота нет на сервере — захожу")
+                    govorilka.start()
+            except Exception as e:
+                status(f"   (сторож Говорилки: {e})")
+            time.sleep(60)
+    threading.Thread(target=settings_watch, daemon=True, name="settings-watch").start()
+    threading.Thread(target=govorilka_watch, daemon=True, name="govorilka-watch").start()
 
 
 def run_actions(brain, hands, actions, confirm_fn, request: str):
@@ -113,26 +153,23 @@ def main() -> None:
             pass
     import sounddevice as sd
 
-    # Мозг живёт в Ollama — ждём, пока она проснётся (после включения компа это бывает не сразу)
-    status(f"Загружаю мозг ({config.MODEL})...")
-    if not system.ensure_ollama():
-        fail("Мартышка не может достучаться до Ollama (мозг).\nПроверь, что Ollama установлена и запущена.")
-    # Порядок важен: мозг → голос → уши (иначе толкаются в видеопамяти и первый ответ тормозит)
+    # Мозг (DeepSeek), голос (Fish Audio) и уши (DeepSeek) — в облаке: на ПК грузится только «ухо на имя» (Vosk)
+    status(f"Мозг: DeepSeek ({config.BRAIN_MODE})")
     brain = Brain()
     try:
         brain.warm_up()
     except Exception as e:
-        fail(f"Мозг не загрузился: {e}")
+        fail(f"Мозг не готов: {e}")
 
-    status(f"Загружаю голос ({config.VOICE_ENGINE})...")
+    status("Голос: Fish Audio")
     from martyshka.voice import Voice
     voice = Voice()
     if not voice.wait_ready():
-        fail(f"Голос не завёлся: {voice.error}")
+        status(f"   голос не готов: {voice.error}")
     if FACE is not None:
         FACE.voice = voice  # шар пульсирует в такт голосу
 
-    status("Загружаю уши (Whisper + Vosk)...")
+    status("Уши: Vosk (имя) + DeepSeek (речь)")
     from martyshka.ears import (Ears, NAME_IN_TEXT_RE, Transcriber, looks_like_echo, make_beep,
                                 speech_seconds, strip_wake_word)
     transcriber = Transcriber()
@@ -155,9 +192,9 @@ def main() -> None:
     from martyshka import hands
     hands.load_apps()  # список программ из меню «Пуск»
     hands.set_llm(brain.complete)  # мозг помогает рукам: составить таблицу, написать текст
-    from martyshka import media    # фото/видео/рисование: на время рисования мозг уходит с видеокарты
-    media.set_hooks(gpu_before=brain.unload, gpu_after=brain.warm_up, llm=brain.complete)
-    from martyshka import games      # игры: мозг пишет код с увеличенной «рабочей памятью»
+    from martyshka import media    # фото/видео: обработка файлов (без генерации)
+    media.set_hooks(gpu_before=None, gpu_after=None, llm=brain.complete)
+    from martyshka import games      # игры: код пишет сильный мозг DeepSeek
     games.set_llm(brain.complete_raw)
 
     def speak(pieces, lang: str = "ru") -> str:
@@ -173,6 +210,12 @@ def main() -> None:
                 print(piece, end="", flush=True)
         except Exception as e:
             print(f"\n{RED}[ошибка: {e}]{RESET}", end="")
+            from martyshka import deepseek
+            if isinstance(e, deepseek.DeepSeekError) and not said:   # мозг не ответил — скажем почему, вслух
+                try:
+                    voice.say(str(e).split(".")[0] + ".")
+                except Exception:
+                    pass
         finally:
             pieces.close()  # если перебили — мозг прекращает писать и сохраняет, что успел
         if said:
@@ -266,7 +309,11 @@ def main() -> None:
             tg.send(own.get("say", "").strip() or "Сделано.")
             return
         lang = reply_language(text)
-        answer = "".join(brain.reply(text, lang)).strip()
+        brain.source = "telegram"
+        try:
+            answer = "".join(brain.reply(text, lang)).strip()
+        finally:
+            brain.source = "голос"
         if not brain.last_actions and config.WEB_ENABLED and DONT_KNOW_RE.search(answer):
             brain.last_actions = [("узнать", [text])]
             answer = ""
@@ -311,7 +358,7 @@ def main() -> None:
     def enter_game() -> None:
         voice.say(style.phrase("game_on"))
         voice.wait_done()
-        status("🎮 Режим игр: освобождаю видеокарту...")
+        status("🎮 Тихий режим...")
         voice.free_gpu()
         transcriber.unload()
         brain.unload()
@@ -334,6 +381,7 @@ def main() -> None:
         FACE.on_game_toggle = lambda: ears.events.put(("game_toggle", None))
 
     last_reply = ""
+    _start_background_watchers()
     missed = hands.restore_reminders()   # напоминания, сохранённые до перезапуска
     from martyshka import briefing as _b
     _b.start_battery_watch()             # пока брат за компом — тихо запоминаем заряд мышки, наушников, клавиатуры

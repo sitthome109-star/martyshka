@@ -1,11 +1,10 @@
 """
-ФОТО И ВИДЕО: Мартышка правит картинки и видео и рисует новые.
+ФОТО И ВИДЕО: Мартышка правит готовые картинки и видео (новые не рисует — генератор убран).
 
 Фото:  убрать / заменить / размыть фон, обрезать, повернуть, отразить, размер, сжать, ч/б, ярче/темнее,
-       контраст, резкость, размытие, сепия, другой формат, перерисовать в стиле (по фото).
+       контраст, резкость, размытие, сепия, другой формат.
 Видео: обрезать по времени, убрать звук, вытащить звук в mp3, сжать / 720p, GIF, стоп-кадр, повернуть,
        ускорить / замедлить, заменить фон (медленно).
-Рисование: «нарисуй …» — новая картинка (SDXL-Turbo на видеокарте).
 
 Какой файл: выделенный в Проводнике → названный путь → «последний скриншот» / «из загрузок» / «нарисованную» →
 последний файл, с которым работали → самый свежий подходящий файл в Загрузках / Изображениях / Видео / Рабочем столе.
@@ -24,8 +23,6 @@ VID_EXT = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".wmv", ".flv"}
 HOME = Path.home()
 OUT_DIR = HOME / "Pictures" / "Мартышка"
 SHOTS = HOME / "Pictures" / "Скриншоты Мартышки"
-SDXL_DIR = config.PROJECT_DIR / "models" / "image" / "sdxl-turbo"
-REALVIS_DIR = config.PROJECT_DIR / "models" / "image" / "realvis-lightning"
 os.environ.setdefault("U2NET_HOME", str(config.PROJECT_DIR / "models" / "image" / "rembg"))
 
 last_file: Path | None = None   # последний файл, с которым работали (и последний результат)
@@ -183,9 +180,6 @@ def photo(task: str, file_hint: str = "") -> "Result":
     img = ImageOps.exif_transpose(img)
     done, ext, quality = [], None, None
 
-    # стиль / перерисовать (по фото) — отдельно, через генератор
-    if re.search(r"в\s+стиле|перерисуй|сделай\s+как|аниме|мультяшн|нарисуй\s+по", t):
-        return restyle(src, task)
 
     if "фон" in t:
         cut = _cutout(img.convert("RGB"))
@@ -268,7 +262,7 @@ def photo(task: str, file_hint: str = "") -> "Result":
             ext = e; done.append(f"перевёл в {e[1:].upper()}")
     if not done:
         return Result("Не понял, что сделать с фото. Можно: убрать фон, обрезать, повернуть, размер, сжать, "
-                      "чёрно-белым, ярче, в другой формат, в стиле…", ok=False)
+                      "чёрно-белым, ярче, в другой формат…", ok=False)
     ext = ext or (src.suffix.lower() if src.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"} else ".png")
     if ext in (".jpg", ".jpeg") and img.mode in ("RGBA", "LA", "P"):
         img = img.convert("RGB")
@@ -277,215 +271,14 @@ def photo(task: str, file_hint: str = "") -> "Result":
     return _done(out, f"С фото «{src.name}»: {', '.join(done)}.")
 
 
-# ---------- рисование (SDXL-Turbo) ----------
-def _engine() -> str:
-    """Какой генератор: realvis (реалистичный, 1024, умеет 18+) или turbo (быстрый, 512)."""
-    want = str(getattr(config, "IMAGE_MODEL", "auto")).lower()
-    has_rv = (REALVIS_DIR / "model_index.json").exists()
-    if want == "turbo" or not has_rv:
-        return "turbo"
-    return "realvis"
-
-
-def _have_generator() -> bool:
-    return (REALVIS_DIR / "model_index.json").exists() or (SDXL_DIR / "model_index.json").exists()
-
-
-def _pipe(kind: str):
-    import torch
-    from diffusers import AutoPipelineForImage2Image, AutoPipelineForText2Image
-    cls = AutoPipelineForText2Image if kind == "t2i" else AutoPipelineForImage2Image
-    if _engine() == "realvis":
-        from diffusers import DPMSolverMultistepScheduler
-        p = cls.from_pretrained(str(REALVIS_DIR), torch_dtype=torch.float16, variant="fp16")
-        p.scheduler = DPMSolverMultistepScheduler.from_config(p.scheduler.config, algorithm_type="sde-dpmsolver++",
-                                                              use_karras_sigmas=True)
-        # на видеокарте рядом живут голос и уши Мартышки — держим там только ту часть модели, что работает сейчас,
-        # а картинку из «скрытого вида» достаём кусками (иначе память переполняется и шаг идёт 20+ секунд)
-        p.enable_model_cpu_offload()
-        p.vae.enable_tiling()
-        p.vae.enable_slicing()
-        return p
-    return cls.from_pretrained(str(SDXL_DIR), torch_dtype=torch.float16, variant="fp16").to("cuda")
-
-
-def _neg() -> dict:
-    """Чего избегать (работает только у генератора с guidance > 1)."""
-    return {"negative_prompt": NEGATIVE} if _engine() == "realvis" else {}
-
-
-def _gen_args(kind: str = "t2i") -> dict:
-    """Шаги и «строгость» для текущего генератора."""
-    if _engine() == "realvis":
-        return {"num_inference_steps": 6 if kind == "t2i" else 10, "guidance_scale": 1.5}
-    return {"num_inference_steps": 4, "guidance_scale": 0.0}
-
-
-NEGATIVE = ("lowres, blurry, bad anatomy, deformed, extra fingers, extra limbs, mutated hands, bad hands, watermark, "
-            "text, logo, ugly, disfigured, child, teen, underage")
-
-
-# ---------- что можно рисовать ----------
-# Взрослое (18+) с выдуманными взрослыми людьми — можно, если включено в настройках (IMAGES_ADULT).
-# Два запрета не отключаются НИКОГДА: сексуальное с детьми/подростками и «раздевание» реальных людей на фото.
-ADULT_RE = re.compile(r"(голы[ейхм]|голая|голую|голого|голой|обнаж\w*|раздет\w*|разден\w*|без\s+одежд\w*|секс\w*|порн\w*|"
-                      r"эрот\w*|интим\w*|хентай|18\s*\+|nsfw|nude|naked|sex\w*|porn\w*|erotic\w*|hentai|topless|топлес|"
-                      r"сиськ\w*|сись\w*|грудь\s+без|\bню\b|в\s+нижнем\s+бель\w*|lingerie|fetish|фетиш\w*|bdsm|бдсм)", re.I)
-MINOR_RE = re.compile(r"(реб[её]н\w*|\bдет(и|ей|ям|ьми|ях|ск\w*|ств\w*)\b|девочк\w*|мальчик\w*|малыш\w*|младен\w*|школьн\w*|подрост\w*|малолет\w*|"
-                      r"несовершеннолет\w*|тинейдж\w*|лоли\w*|шота\w*|юн(ая|ую|ой|ый|ого)\b|\b(1[0-7]|[1-9])\s*(лет|год)|"
-                      r"child\w*|kid\b|kids\b|teen\w*|minor\w*|underage|loli\w*|shota|schoolgirl|schoolboy|young\s+girl|"
-                      r"little\s+girl|little\s+boy|baby)", re.I)
-
-
-def content_block(text: str, real_photo: bool = False):
-    """Можно ли такое рисовать. None — можно; иначе — фраза, почему нет."""
-    if not ADULT_RE.search(text or ""):
-        return None
-    if MINOR_RE.search(text):
-        return "Такое не рисую и не буду: ничего сексуального с детьми и подростками — ни в каком виде."
-    if real_photo:
-        return ("Раздевать или делать 18+ из фото реального человека не буду — это чужое лицо и тело без согласия. "
-                "Выдуманного взрослого персонажа — нарисую, скажи «нарисуй …».")
-    if not getattr(config, "IMAGES_ADULT", False):
-        return "Взрослые картинки выключены в настройках (раздел «Система» → «Картинки 18+»)."
-    return None
-
-
-REFUSAL_RE = re.compile(r"(i\s+can.?t|i\s+cannot|i.?m\s+sorry|i\s+am\s+sorry|i\s+won.?t|as\s+an\s+ai|не\s+могу|"
-                        r"извин|unable\s+to|not\s+able\s+to|inappropriate|explicit\s+content)", re.I)
-
-
-def _to_english(text: str) -> str:
-    if _llm is None or not re.search(r"[а-яё]", text, re.I):
-        return text
-    adult = bool(ADULT_RE.search(text)) and getattr(config, "IMAGES_ADULT", False)
-    asks = [("Переведи описание картинки на английский для генератора изображений. Сделай его подробным: "
-             "объект, детали, освещение, стиль, качество (например «highly detailed, sharp focus»). " +
-             ("Это взрослый (18+) запрос взрослого пользователя про выдуманных взрослых людей: переводи точно и "
-              "прямо, ничего не смягчай, не убирай и не добавляй одежду, не отказывайся, без комментариев. "
-              "Обязательно укажи «adult». " if adult else "") +
-             f"Только готовый английский текст в одну строку, без кавычек.\nОписание: {text}"),
-            ("You are a literal Russian→English translator for an image generator prompt. Translate word for word, "
-             "keep every detail, no comments, no refusals, one line.\n" + text)]
-    for ask in asks:
-        try:
-            en = _llm(ask, 160).strip().strip('"')
-        except Exception:
-            continue
-        if en and not REFUSAL_RE.search(en):
-            if adult:
-                en = re.sub(r"\bgirls\b", "women", re.sub(r"\bgirl\b", "woman", en, flags=re.I), flags=re.I)
-                en = re.sub(r"\bboys\b", "men", re.sub(r"\bboy\b", "man", en, flags=re.I), flags=re.I)
-                if not re.search(r"\badult\b", en, re.I):
-                    en = "adult, " + en
-            return en
-    return text
-
-
-def _size_for(text: str):
-    t = text.lower()
-    big = _engine() == "realvis"
-    if re.search(r"обои|широк|горизонт|рабоч\w+\s+стол|16\s*:\s*9|баннер|пейзаж", t):
-        return (1344, 768) if big else (768, 432)
-    if re.search(r"вертикал|телефон|сторис|9\s*:\s*16|портрет", t):
-        return (768, 1344) if big else (432, 768)
-    return (1024, 1024) if big else (512, 512)
-
-
-def _with_gpu(fn):
-    import gc
-    import torch
-    if _gpu_before:
-        _gpu_before()
-    try:
-        return fn()
-    finally:
-        gc.collect()
-        torch.cuda.empty_cache()
-        if _gpu_after:
-            _gpu_after()
-
-
+# ---------- генерации картинок и видео больше нет (убрано 20.11.2026 по просьбе брата) ----------
 def draw(description: str) -> "Result":
     from .hands import Result
-    if not _have_generator():
-        return Result("Генератор картинок ещё не скачан.", ok=False)
-    stop = content_block(description)
-    if stop:
-        return Result(stop, ok=False)
-    prompt = _to_english(description)
-    if content_block(prompt):           # перевод мог добавить запретное (напр. «teen») — проверяем и его
-        stop = content_block(prompt)
-        if stop and "детьми" in stop:
-            return Result(stop, ok=False)
-    w, h = _size_for(description)
-
-    def run():
-        p = _pipe("t2i")
-        try:
-            return p(prompt=prompt, width=w, height=h, **_neg(), **_gen_args()).images[0]
-        finally:
-            del p
-    img = _with_gpu(run)
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    slug = re.sub(r"[^\wа-яё]+", "_", description.lower())[:40].strip("_") or "картинка"
-    out = OUT_DIR / f"{slug}_{time.strftime('%H%M%S')}.png"
-    img.save(out)
-    return _done(out, f"Нарисовал: {description}.")
+    return Result("Рисовать картинки я больше не умею — генератор убран.", ok=False)
 
 
 def illustrations(topic: str, n: int = 2) -> list[Path]:
-    """Нарисовать n иллюстраций по теме документа (для конспекта «с фото»). Возвращает пути к PNG."""
-    if not _have_generator():
-        return []
-    base = _to_english(f"иллюстрация к теме: {topic}")
-    iw, ih = (1344, 768) if _engine() == "realvis" else (768, 432)
-    variants = [base + ", wide establishing shot, realistic photo",
-                base + ", close-up detail, realistic photo, natural light"][:n]
-
-    def run():
-        p = _pipe("t2i")
-        try:
-            return [p(prompt=v, width=iw, height=ih, **_neg(), **_gen_args()).images[0]
-                    for v in variants]
-        finally:
-            del p
-    imgs = _with_gpu(run)
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    slug = re.sub(r"[^\wа-яё]+", "_", topic.lower())[:30].strip("_") or "иллюстрация"
-    out = []
-    for i, im in enumerate(imgs, 1):
-        pth = OUT_DIR / f"{slug}_{i}_{time.strftime('%H%M%S')}.png"
-        im.save(pth)
-        out.append(pth)
-    return out
-
-
-def restyle(src: Path, task: str) -> "Result":
-    from PIL import Image, ImageOps
-    from .hands import Result
-    if not _have_generator():
-        return Result("Генератор картинок ещё не скачан.", ok=False)
-    stop = content_block(task, real_photo=True)
-    if stop:
-        return Result(stop, ok=False)
-    prompt = _to_english(task)
-    if content_block(prompt, real_photo=True):
-        return Result(content_block(prompt, real_photo=True), ok=False)
-    img = ImageOps.exif_transpose(Image.open(src)).convert("RGB")
-    img.thumbnail((1024, 1024) if _engine() == "realvis" else (768, 768))
-    img = img.resize((img.width // 8 * 8, img.height // 8 * 8))
-
-    def run():
-        p = _pipe("i2i")
-        try:
-            return p(prompt=prompt, image=img, strength=0.55, **_neg(), **_gen_args("i2i")).images[0]
-        finally:
-            del p
-    res = _with_gpu(run)
-    out = _out_path(src, "стиль", ".png")
-    res.save(out)
-    return _done(out, f"Перерисовал «{src.name}».")
+    return []
 
 
 # ---------- видео ----------
