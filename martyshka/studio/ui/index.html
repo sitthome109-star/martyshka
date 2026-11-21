@@ -608,17 +608,17 @@ async function voicePicker(c,f){
   const wrap=document.createElement('div'); wrap.innerHTML=`<div class="vfilter"></div><div style="display:flex;gap:8px;margin:0 0 10px"><input class="in" placeholder="Найти голос по названию…"><button class="btn">Искать во всей библиотеке</button></div><div class="vlist"><div style="color:var(--muted)">Загружаю голоса…</div></div>`;
   c.appendChild(wrap);
   let all=await api().voices(), flt='all', q='', cur=f.value||'';
-  const F=[['all','Все'],['drama','🎭 Для Drama 3'],['off','⭐ Официальные'],['ru','Русские'],['uk','Украинские'],['de','Немецкие'],['en','Английские'],['female','Женские'],['male','Мужские']];
+  const F=[['all','Все'],['drama','🎭 Для Drama 3'],['anime','🌸 Аниме'],['off','⭐ Официальные'],['ru','Русские'],['uk','Украинские'],['de','Немецкие'],['en','Английские'],['female','Женские'],['male','Мужские']];
   const fb=wrap.querySelector('.vfilter');
   F.forEach(([k,n])=>{ const b=document.createElement('button'); b.textContent=n; b.className=k===flt?'on':''; b.onclick=()=>{ flt=k; fb.querySelectorAll('button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); draw(); }; fb.appendChild(b); });
   const inp=wrap.querySelector('input'); inp.oninput=()=>{ q=inp.value.trim().toLowerCase(); draw(); };
   wrap.querySelector('.btn').onclick=async()=>{ if(!q){ toast('Напиши название'); return; } toast('Ищу во всей библиотеке Fish…'); const r=await api().search_voices(q); const ids=new Set(all.map(v=>v.id)); r.forEach(v=>{ if(!ids.has(v.id)) all.push(v); }); draw(); };
-  const L={ru:'RU',uk:'UK',de:'DE',en:'EN'};
+  const L={ru:'RU',uk:'UK',de:'DE',en:'EN',ja:'JA'};
   function draw(){ const list=wrap.querySelector('.vlist'); list.innerHTML='';
-    const vs=all.filter(v=>(flt==='all'||(flt==='drama'&&v.drama)||(flt==='off'&&v.official)||v.lang===flt||v.gender===flt) && (!q||v.title.toLowerCase().includes(q)||(v.desc||'').toLowerCase().includes(q))).slice(0,300);
+    const vs=all.filter(v=>(flt==='all'||(flt==='drama'&&v.drama)||(flt==='anime'&&v.anime)||(flt==='off'&&v.official)||v.lang===flt||v.gender===flt) && (!q||v.title.toLowerCase().includes(q)||(v.desc||'').toLowerCase().includes(q))).slice(0,300);
     if(!vs.length){ list.innerHTML='<div style="color:var(--muted)">Ничего не нашла.</div>'; return; }
     vs.forEach(v=>{ const r=document.createElement('div'); r.className='v'+(v.id===cur?' sel':'');
-      r.innerHTML=`<button class="play" title="Послушать">${IC.play}</button><div class="vn"><b></b><small></small></div><span class="pill">${L[v.lang]||v.lang||'?'}</span>${v.drama?'<span class="pill">🎭 Drama</span>':''}${v.official?'<span class="pill ok">официальный</span>':''}<button class="btn" style="height:30px">${v.id===cur?'Выбран ✓':'Выбрать'}</button>`;
+      r.innerHTML=`<button class="play" title="Послушать">${IC.play}</button><div class="vn"><b></b><small></small></div><span class="pill">${L[v.lang]||v.lang||'?'}</span>${v.anime?'<span class="pill">🌸 аниме</span>':''}${v.drama&&!v.anime?'<span class="pill">🎭 Drama</span>':''}${v.official?'<span class="pill ok">официальный</span>':''}<button class="btn" style="height:30px">${v.id===cur?'Выбран ✓':'Выбрать'}</button>`;
       r.querySelector('b').textContent=v.title; r.querySelector('small').textContent=(v.gender==='female'?'женский · ':v.gender==='male'?'мужской · ':'')+(v.popular?Math.round(v.popular/1000)+'k использований · ':'')+(v.desc||'');
       r.querySelector('.play').onclick=async ev=>{ const p=ev.currentTarget; p.classList.add('busy'); const res=await api().preview_voice(v.id,v.lang); p.classList.remove('busy'); if(res&&res.error) toast(res.error); };
       r.querySelector('.btn').onclick=()=>{ cur=v.id; if(f.instant){ api().save_settings({[f.key]:v.id}); toast('Голос: '+v.title); } else { mark(f.key,v.id); toast('Нажми «Сохранить» внизу'); } draw(); };

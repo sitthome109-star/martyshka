@@ -168,33 +168,55 @@ def _gender(tags: list[str]) -> str:
     return "male" if "male" in t else "female" if "female" in t else ""
 
 
-def refresh_catalog(per_lang: int = 150) -> list[dict]:
-    """Скачать список голосов: официальные + самые популярные из библиотеки на 4 языках."""
+ANIME_LANGS = ["ru", "uk", "de", "en", "ja"]
+# голоса «с характером» — с Drama 3 играют лучше всего (Drama работает со всеми голосами)
+ACTING_TAGS = {"drama", "dramatic", "expressive", "emotional", "villain", "cartoon", "theatrical"}
+
+
+def _entry(i: dict, lang: str) -> dict:
+    tags = [str(t).lower() for t in (i.get("tags") or [])]
+    return {"id": i["_id"], "title": (i.get("title") or "").strip()[:60], "lang": lang,
+            "gender": _gender(tags), "official": False, "popular": int(i.get("task_count") or 0),
+            "desc": (i.get("description") or "")[:160], "anime": "anime" in tags,
+            "acting": bool(ACTING_TAGS & set(tags))}
+
+
+def _pages(params: dict, want: int, keep=lambda i: True, max_pages: int = 8):
+    got, page = 0, 1
+    while got < want and page <= max_pages:
+        r = http().get(API + "/model", headers=_headers(), params={"page_size": 100, "page_number": page,
+                                                                   "sort_by": "task_count", **params}, timeout=40)
+        if r.status_code != 200:
+            return
+        items = r.json().get("items") or []
+        if not items:
+            return
+        for i in items:
+            if i.get("dmca_taken_down") or i.get("state") != "trained" or i.get("type") != "tts" or not keep(i):
+                continue
+            got += 1
+            yield i
+            if got >= want:
+                return
+        page += 1
+
+
+def refresh_catalog(per_lang: int = 300, anime_per_lang: int = 100) -> list[dict]:
+    """Скачать список голосов: официальные + самые популярные на 4 языках + аниме-голоса (ru/uk/de/en/ja)."""
     out = {v["id"]: v for v in _official()}
     for lang in LANGS:
-        got, page = 0, 1
-        while got < per_lang and page <= 5:
-            r = http().get(API + "/model", headers=_headers(), params={
-                "page_size": 100, "page_number": page, "language": lang, "sort_by": "task_count"}, timeout=40)
-            if r.status_code != 200:
-                break
-            items = r.json().get("items") or []
-            if not items:
-                break
-            for i in items:
-                if i.get("dmca_taken_down") or i.get("state") != "trained" or i.get("type") != "tts":
-                    continue
-                if i["_id"] in out:
-                    continue
-                out[i["_id"]] = {"id": i["_id"], "title": (i.get("title") or "").strip()[:60], "lang": lang,
-                                 "gender": _gender(i.get("tags")), "official": False,
-                                 "popular": int(i.get("task_count") or 0),
-                                 "desc": (i.get("description") or "")[:160]}
-                got += 1
-                if got >= per_lang:
-                    break
-            page += 1
-    voices = sorted(out.values(), key=lambda v: (not v["official"], list(LANGS).index(v["lang"]), -v["popular"]))
+        for i in _pages({"language": lang}, per_lang):
+            out.setdefault(i["_id"], _entry(i, lang))
+    is_anime = lambda i: "anime" in [str(t).lower() for t in (i.get("tags") or [])]
+    for lang in ANIME_LANGS:
+        for i in _pages({"language": lang, "tag": "anime"}, anime_per_lang, keep=is_anime):
+            if i["_id"] in out:
+                out[i["_id"]]["anime"] = True
+            else:
+                out[i["_id"]] = _entry(i, lang)
+    order = list(LANGS) + ["ja"]
+    voices = sorted(out.values(), key=lambda v: (not v["official"], order.index(v["lang"]) if v["lang"] in order else 9,
+                                                -v["popular"]))
     CATALOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     CATALOG_FILE.write_text(json.dumps(voices, ensure_ascii=False, indent=1), encoding="utf-8")
     return voices
@@ -211,7 +233,7 @@ def catalog() -> list[dict]:
     ids = {x["id"] for x in v}
     v += [o for o in _official() if o["id"] not in ids]        # новые официальные (например, Delia)
     for x in v:
-        x["drama"] = x["id"] in DRAMA_PICKS
+        x["drama"] = x["id"] in DRAMA_PICKS or x.get("official") or x.get("acting") or x.get("anime")
     return v
 
 
@@ -226,9 +248,7 @@ def search(query: str, limit: int = 40) -> list[dict]:
         if i.get("dmca_taken_down") or i.get("type") != "tts":
             continue
         langs = i.get("languages") or [""]
-        res.append({"id": i["_id"], "title": (i.get("title") or "").strip()[:60], "lang": langs[0],
-                    "gender": _gender(i.get("tags")), "official": False, "popular": int(i.get("task_count") or 0),
-                    "desc": (i.get("description") or "")[:160]})
+        res.append(_entry(i, (i.get("languages") or [""])[0]))
     return res
 
 
