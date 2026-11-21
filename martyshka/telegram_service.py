@@ -37,11 +37,14 @@ DONT_KNOW_RE = re.compile(r"(не знаю|не в курсе|без понят�
 def _pid_alive(pid) -> bool:
     if not pid:
         return False
-    h = ctypes.windll.kernel32.OpenProcess(0x1000, False, int(pid))   # PROCESS_QUERY_LIMITED_INFORMATION
-    if h:
-        ctypes.windll.kernel32.CloseHandle(h)
-        return True
-    return False
+    k32 = ctypes.windll.kernel32
+    h = k32.OpenProcess(0x1000, False, int(pid))   # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return False
+    code = ctypes.c_ulong()
+    k32.GetExitCodeProcess(h, ctypes.byref(code))   # процесс закрылся, но ссылка на него осталась — не жив
+    k32.CloseHandle(h)
+    return code.value == 259                         # STILL_ACTIVE
 
 
 def _read_holder() -> dict:
@@ -107,9 +110,12 @@ def run_actions(brain, hands, actions, confirm_fn, request: str):
 
 
 class TelegramService:
-    def __init__(self, log=print, brain=None, transcriber=None):
+    """events — чужая очередь (голосовая Мартышка): сообщения обрабатывает ЕЁ главный цикл через handle(),
+    по очереди с голосом — так один мозг не работает из двух потоков сразу. Без неё — свой поток."""
+    def __init__(self, log=print, brain=None, transcriber=None, events: queue.Queue | None = None):
         self.log = log
-        self.events: queue.Queue = queue.Queue()
+        self.inline = events is not None
+        self.events: queue.Queue = events if events is not None else queue.Queue()
         self.tg = None
         self.brain = brain
         self.transcriber = transcriber
@@ -119,27 +125,38 @@ class TelegramService:
 
     # ---------- запуск ----------
     def start(self) -> bool:
-        if not config.TELEGRAM_TOKEN.strip():
+        if not config.TELEGRAM_TOKEN.strip() or self.tg is not None:
             return False
-        if held_by_other():
+        # СНАЧАЛА занять место держателя, потом слушать Telegram: иначе два процесса читали бы сообщения
+        # одновременно (Telegram отдаёт каждое только одному — и половина терялась бы)
+        if not acquire():
             return False
         try:
             self._prepare()
             from .telegram_bot import TelegramBot
-            self.tg = TelegramBot(self.events, log=self.log)
-            if not self.tg.start():
-                self.tg = None
+            tg = TelegramBot(self.events, log=self.log)
+            if not tg.start():
+                release()
                 return False
+            self.tg = tg
         except Exception as e:
             self.log(f"   (Telegram-сервис не запустился: {e})")
-            self.tg = None
+            release()
             return False
-        if not acquire():
-            self.log("   (Telegram-сервис: другой процесс уже держит бота)")
-            self.tg = None
-            return False
-        threading.Thread(target=self._run, daemon=True, name="telegram-run").start()
+        import atexit
+        atexit.register(release)
+        if not self.inline:
+            threading.Thread(target=self._run, daemon=True, name="telegram-run").start()
         return True
+
+    def handle(self, msg: dict) -> None:
+        """Обработать сообщение из чужой очереди (главный цикл голосовой Мартышки)."""
+        try:
+            self._handle(msg)
+        except Exception as e:
+            self.log(f"   (Telegram: ошибка {e})")
+            if self.tg:
+                self.tg.send(f"Что-то сломалось: {e}")
 
     def _prepare(self) -> None:
         from . import hands, media, games
@@ -270,11 +287,12 @@ class TelegramService:
         self.log(f"{config.NAME} → Telegram")
 
 
-def start(log=print, brain=None, transcriber=None) -> TelegramService | None:
-    """Поднять Telegram-бота. Если сейчас его держит другой процесс — сторож подхватит, когда освободится."""
+def start(log=print, brain=None, transcriber=None, events=None) -> TelegramService | None:
+    """Поднять Telegram-бота. Если сейчас его держит другой процесс — сторож подхватит, когда освободится.
+    events — очередь главного цикла голосовой Мартышки (тогда сообщения обрабатываются там, через handle)."""
     if not config.TELEGRAM_TOKEN.strip():
         return None
-    svc = TelegramService(log=log, brain=brain, transcriber=transcriber)
+    svc = TelegramService(log=log, brain=brain, transcriber=transcriber, events=events)
     svc.start()   # пробуем сразу
     threading.Thread(target=svc.watchdog_loop, daemon=True, name="telegram-watchdog").start()
     return svc

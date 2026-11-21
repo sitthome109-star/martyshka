@@ -86,6 +86,10 @@ class Memory:
 
     # ---------- история разговора ----------
     def add_message(self, role: str, content: str) -> None:
+        # голос и окно чата (Telegram) пишут в один файл — сначала подхватываем чужие свежие реплики
+        disk = _load(self.history_path, None)
+        if isinstance(disk, list) and len(disk) >= len(self.history):
+            self.history = disk
         self.history.append({"role": role, "content": content})
         self.history = self.history[-config.HISTORY_ON_DISK:]
         _save(self.history_path, self.history)

@@ -198,7 +198,8 @@ def main() -> None:
     games.set_llm(brain.complete_raw)
     # ---------- Telegram (работает и без голоса, когда открыт чат) ----------
     from martyshka import telegram_service
-    telegram_service.start(log=status, brain=brain, transcriber=transcriber)
+    # сообщения с телефона идут в общую очередь ушей — главный цикл обрабатывает их по очереди с голосом
+    tg_service = telegram_service.start(log=status, brain=brain, transcriber=transcriber, events=ears.events)
 
     def speak(pieces, lang: str = "ru") -> str:
         """Озвучить ответ мозга и напечатать его. Возвращает сказанный текст."""
@@ -235,19 +236,27 @@ def main() -> None:
         voice.wait_done()
         ears.listen_now(6)
         status("👂 Жду «да» или «нет»...")
-        while True:
-            try:
-                kind, data = ears.events.get(timeout=15)
-            except queue.Empty:
-                return False
-            if kind == "wake":
-                continue
-            if kind != "audio":
-                status("   (не ответил — отбой)")
-                return False
-            answer = transcriber.transcribe(data[0])
-            print(f"{CYAN}Ты:{RESET} {answer}")
-            return hands.is_yes(answer)
+        later = []                       # сообщения из Telegram, пришедшие во время вопроса — обработаем потом
+        try:
+            while True:
+                try:
+                    kind, data = ears.events.get(timeout=15)
+                except queue.Empty:
+                    return False
+                if kind == "telegram":
+                    later.append((kind, data))
+                    continue
+                if kind == "wake":
+                    continue
+                if kind != "audio":
+                    status("   (не ответил — отбой)")
+                    return False
+                answer = transcriber.transcribe(data[0])
+                print(f"{CYAN}Ты:{RESET} {answer}")
+                return hands.is_yes(answer)
+        finally:
+            for item in later:
+                ears.events.put(item)
 
     def on_reminder(text: str) -> None:
         print(f"\n{YELLOW}⏰ Напоминание: {text}{RESET}")
@@ -312,6 +321,10 @@ def main() -> None:
     while True:
         kind, data = ears.events.get()
 
+        if kind == "telegram":
+            if tg_service is not None:
+                tg_service.handle(data)
+            continue
         if kind == "game_toggle":
             exit_game() if game["on"] else enter_game()
             continue

@@ -47,6 +47,9 @@ def norm(name: str) -> str:
     n = re.sub(r"\s+", " ", (name or "").strip())
     if not n or n.lower() in ("брат", "хозяин", "sitthome", "owner"):
         return OWNER
+    # ник брата sitthome на слух распознаётся по-разному: Сидхам, Ситхам, Ситхом, Сиддхом, Ситхун…
+    if re.fullmatch(r"(сит+х?[оау]м|сид+х?[оау]м|сит+хун|сит+хоум|sit+h?om?e?)", n.lower()):
+        return OWNER
     return n
 
 
