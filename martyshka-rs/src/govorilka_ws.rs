@@ -378,7 +378,7 @@ fn system_prompt(who: &str, anger: i32, with_morni: bool, for_chat: bool, query:
 - Эмоции в {…}: {радостно}, {весело}, {игриво}, {хитро}, {тепло}, {задумчиво}, {удивлённо}, {в шоке}, {устало}, {грустно}, {раздражённо}, {зло}, {в ярости}, {холодно}, {насмешливо}, {саркастично}, {ядовито}, {драматично}, {заговорщически}, {шёпотом}, {кричит}, {быстро, взахлёб}, {медленно, растягивая слова}, {сдерживая смех}.\n\
 - Звуки и паузы: {смех}, {смешок}, {хихикает}, {хохочет}, {вздох}, {тяжёлый вздох}, {фыркает}, {хмыкает}, {цокает}, {пауза}, {длинная пауза}, {зевает}.\n\
 - Все 7 парных акцентов: <whisper>…</whisper>, <emphasis>…</emphasis>, <stress>…</stress>, <soft>…</soft>, <forceful>…</forceful>, <slow>…</slow>, <fast>…</fast>.\n\
-Активно используй всю палитру, чередуй разные эмоции. {драма} — при наличии кредитов включит Drama 3."
+Активно используй всю палитру, чередуй разные эмоции."
     };
 
     let base = format!(
@@ -554,10 +554,10 @@ async fn handle_owner_chat_cmd(
         return Some(format!("Мозг в Говорилке теперь: {m}"));
     }
     if let Some(rest) = low.strip_prefix("!движок ") {
-        let fm = if rest.contains("drama") || rest.contains("beta") {
-            "s2-pro-beta"
+        let fm = if rest.contains("drama") || rest.contains("драма") {
+            "drama-3"
         } else if rest.contains("pro") && !rest.contains("free") {
-            "s2-pro"
+            "s2.1-pro"
         } else {
             "s2.1-pro-free"
         };

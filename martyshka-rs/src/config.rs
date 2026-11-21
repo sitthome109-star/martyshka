@@ -36,7 +36,7 @@ pub struct Settings {
     pub fish_model: String,
     #[serde(default, rename = "VOICE_ID")]
     pub voice_id: String,
-    #[serde(default = "d_true", rename = "MOOD_VOICE")]
+    #[serde(default, rename = "MOOD_VOICE")]
     pub mood_voice: bool,
     #[serde(default = "d_angry_from", rename = "MOOD_ANGRY_FROM")]
     pub mood_angry_from: i32,
