@@ -353,6 +353,66 @@ class TestNewStudioAndTelegramFeatures(unittest.TestCase):
         with mock.patch.object(deepseek, "ask", return_value='{"обида": 0}'):
             self.assertEqual(g._rate_offense("спой ещё", "брат"), 0)
 
+    def test_govorilka_short_no_sir_no_template(self):
+        """Говорилка: «сэр» вырезается; обычный ответ короткий (песню не режем); та же подача подряд — без неё."""
+        from unittest import mock
+        from martyshka import govorilka as g
+        self.assertEqual(g._no_sir("{спокойно} Утро, сэр, вы правы."), "{спокойно} Утро, вы правы.")
+        self.assertEqual(g._no_sir("{спокойно} Сэр, я вроде стою на месте."), "{спокойно} Я вроде стою на месте.")
+        self.assertEqual(g._no_sir("Вот, сэр, и всё. Дальше петь или хватит, сэр?"), "Вот, и всё. Дальше петь или хватит?")
+        self.assertEqual(g._no_sir("Извольте, сэр. {пауза} Мужик"), "Извольте. {пауза} Мужик")
+        self.assertEqual(g._no_sir("Серый сервис, серы нет"), "Серый сервис, серы нет")   # «сер…» не трогаем
+        self.assertNotIn("сэр", g._clean("[ТОН: 0] Да, сэр, сейчас.").lower())
+
+        class FakeMouth:
+            def __init__(self):
+                self.said = []
+
+            def queue(self, s):
+                self.said.append(s)
+
+        sentence = "Это довольно длинное предложение, которое мозг пишет без остановки, как будто читает лекцию. "
+        long_reply = "[ТОН: 2] {спокойно, с лёгкой усмешкой} Ну, сэр, начнём. " + sentence * 12 + "[ЗАПОМНИ О: Вася | любит лекции]"
+
+        def fake_stream(*a, **k):
+            for i in range(0, len(long_reply), 7):
+                yield "text", long_reply[i:i + 7]
+        history = [{"role": "user", "content": "(Вася): привет"},
+                   {"role": "assistant", "content": "{Спокойно,  с лёгкой усмешкой} Привет."},
+                   {"role": "user", "content": "(Вася): как дела"}]
+        with mock.patch.object(g, "build_msgs", return_value=[]), \
+                mock.patch.object(deepseek, "stream", side_effect=fake_stream):
+            m = FakeMouth()
+            raw = g.reply_stream(history, m, 2, who="Вася")
+            spoken = sum(g._spoken_len(s) for s in m.said)
+            self.assertLessEqual(spoken, g.SHORT_MAX_CHARS)             # монолог обрезан
+            self.assertGreater(spoken, 50)
+            self.assertNotIn("сэр", " ".join(m.said).lower())
+            self.assertFalse(m.said[0].startswith("{"))                 # та же подача, что в прошлый раз, — снята
+            self.assertIn("[ТОН: 2]", raw)                              # метки не потерялись
+            self.assertIn("[ЗАПОМНИ О: Вася | любит лекции]", raw)
+            # песня/рассказ по просьбе — не режем
+            m2 = FakeMouth()
+            g.reply_stream(history, m2, 0, who="Вася", long_ok=True)
+            self.assertGreater(sum(g._spoken_len(s) for s in m2.said), 1000)
+            # к Морни — первая фраза начинается с «Морни,» (после подачи), дальше имя не навязываем
+            m3 = FakeMouth()
+            g.reply_stream([], m3, 0, with_morni=True, who="Морни")
+            self.assertTrue(m3.said[0].startswith("{спокойно, с лёгкой усмешкой} Морни, ну"))
+            self.assertFalse(any(s.startswith("Морни") for s in m3.said[1:]))
+            # во время разговора с Морни говорит брат — ему без «Морни,»
+            m4 = FakeMouth()
+            g.reply_stream([], m4, 0, with_morni=True, who="sitth")
+            self.assertNotIn("Морни", m4.said[0])
+        self.assertTrue(g.LONG_REQ_RE.search("Мартышка, расскажи подробно, как прошёл день"))
+        self.assertTrue(g.LONG_REQ_RE.search("расскажи сказку про Васю"))
+        self.assertFalse(g.LONG_REQ_RE.search("Мартышка, как дела?"))
+        # подсказка о заезженных началах
+        ctx = g._openings_context([{"role": "assistant", "content": "{драма, ярость} Морни, ты {пауза} зла"},
+                                   {"role": "assistant", "content": "{драма, ярость} Морни, опять {пауза}"}])
+        self.assertIn("{драма, ярость} ×2", ctx)
+        self.assertIn("{пауза} ×2", ctx)
+
 
 if __name__ == "__main__":
     unittest.main()
