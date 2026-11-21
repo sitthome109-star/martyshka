@@ -281,6 +281,46 @@ class TestNewStudioAndTelegramFeatures(unittest.TestCase):
         _, _, mdl = fish.mood_pick("[хохочет] Ха-ха!", "v1", fish.FREE, anger=0)
         self.assertEqual(mdl, fish.DRAMA)
 
+    def test_chat_diff_pop_turn_and_drop_file(self):
+        import base64
+        from martyshka.studio import app
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "demo.py"
+            f.write_text("x = 1\ny = 2\n", encoding="utf-8")
+            orig_ws = tools.config.STUDIO_WORKSPACE
+            try:
+                tools.config.STUDIO_WORKSPACE = td
+                r = tools.run_tool("edit_file", {"path": str(f), "old": "y = 2", "new": "y = 42"}, {})
+                self.assertTrue(r["ok"])
+                self.assertIn("-y = 2", r.get("diff", ""))
+                self.assertIn("+y = 42", r.get("diff", ""))
+            finally:
+                tools.config.STUDIO_WORKSPACE = orig_ws
+
+            orig_dir = agent_loop.CHATS_DIR
+            try:
+                agent_loop.CHATS_DIR = Path(td) / "chats"
+                c = agent_loop.Chat()
+                c.history = [{"role": "user", "text": "привет"}, {"role": "assistant", "text": "здарова", "tool_calls": []}]
+                c.display = [{"type": "user", "text": "привет"}, {"type": "assistant", "text": "здарова"}]
+                c.pinned = True
+                c.save()
+                listed = agent_loop.Chat.list_all()
+                self.assertEqual(len(listed), 1)
+                self.assertTrue(listed[0]["pinned"])
+                popped = c.pop_last_turn()
+                self.assertEqual(popped, "привет")
+                self.assertEqual(c.history, [])
+                self.assertEqual(c.display, [])
+            finally:
+                agent_loop.CHATS_DIR = orig_dir
+
+        api = app.Api()
+        d = api.save_dropped_file("note.txt", "data:text/plain;base64," + base64.b64encode(b"hello").decode())
+        self.assertTrue(d["ok"])
+        self.assertFalse(d["is_image"])
+        Path(d["path"]).unlink(missing_ok=True)
+
     def test_govorilka_anger_does_not_attack_or_grow_wrongly(self):
         from unittest import mock
         from martyshka import govorilka as g

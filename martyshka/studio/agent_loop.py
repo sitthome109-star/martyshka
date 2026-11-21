@@ -299,6 +299,7 @@ class Chat:
         self.title = "Новый чат"
         self.created = time.time()
         self.project = ""                  # над каким проектом идёт работа в этом чате
+        self.pinned = False                # закреплён ли чат вверху списка
         self.restart_requested = False     # агент поменял саму Студию — перезапуститься после ответа
         self.plan: list[dict] = []         # план текущей задачи (галочки)
         self.history: list[dict] = []      # для мозга
@@ -315,12 +316,13 @@ class Chat:
         d = json.loads(self.path.read_text(encoding="utf-8"))
         self.title, self.created = d.get("title", self.title), d.get("created", self.created)
         self.project = d.get("project", "")
+        self.pinned = bool(d.get("pinned", False))
         self.history, self.display = d.get("history", []), d.get("display", [])
 
     def save(self) -> None:
         CHATS_DIR.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps({"title": self.title, "created": self.created, "project": self.project,
-                                         "history": self.history, "display": self.display},
+                                         "pinned": self.pinned, "history": self.history, "display": self.display},
                                         ensure_ascii=False), encoding="utf-8")
 
     @staticmethod
@@ -331,10 +333,25 @@ class Chat:
         for p in sorted(CHATS_DIR.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
             try:
                 d = json.loads(p.read_text(encoding="utf-8"))
-                out.append({"id": p.stem, "title": d.get("title", "Чат"), "updated": p.stat().st_mtime})
+                out.append({"id": p.stem, "title": d.get("title", "Чат"), "updated": p.stat().st_mtime,
+                            "pinned": bool(d.get("pinned", False))})
             except Exception:
                 continue
+        out.sort(key=lambda c: (not c["pinned"], -c["updated"]))
         return out
+
+    def pop_last_turn(self) -> str:
+        """Убрать последний ход (сообщение пользователя и ответ) — для перегенерации или редактирования."""
+        last_u = max((i for i, m in enumerate(self.history)
+                      if m.get("role") == "user" and not m.get("hidden")), default=-1)
+        last_du = max((i for i, m in enumerate(self.display) if m.get("type") == "user"), default=-1)
+        if last_u < 0 or last_du < 0:
+            return ""
+        text = self.display[last_du].get("text") or self.history[last_u].get("text") or ""
+        self.history = self.history[:last_u]
+        self.display = self.display[:last_du]
+        self.save()
+        return text
 
     def remove(self) -> None:
         """Чат не стираем насовсем — переносим в папку «удалённые»."""
@@ -661,7 +678,8 @@ class Chat:
                     self.project = str(tools.workspace() / rel.parts[0]) if len(rel.parts) > 1 else str(p.parent)
         if name != "plan":
             item = {"type": "tool", "label": lbl, "name": name, "kind": kind, "ok": out.get("ok", False),
-                    "detail": _summary(out.get("text", ""), 1500), "file": out.get("file", "")}
+                    "detail": _summary(out.get("text", ""), 1500), "file": out.get("file", ""),
+                    "diff": out.get("diff", "")}
             emit(dict(item, type="tool_end", id=call["id"], image=out.get("image", "")))
             self.display.append(item)
         self.history.append({"role": "tool", "id": call["id"], "name": name, "content": out.get("text", ""),

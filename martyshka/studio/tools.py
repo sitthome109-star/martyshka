@@ -541,11 +541,17 @@ def _run(name: str, args: dict, ctx: dict) -> dict:
         _save_undo(p)
         note = _backup_if_own(p)
         updated = text.replace(old, new)
+        import difflib
+        diff_lines = list(difflib.unified_diff(
+            text.splitlines(), updated.splitlines(),
+            fromfile=p.name, tofile=p.name, n=2, lineterm="",
+        ))
+        diff_text = "\n".join(diff_lines[:40]) + ("\n…(ещё изменения)" if len(diff_lines) > 40 else "")
         if crlf:
             updated = updated.replace("\n", "\r\n")
         p.write_bytes(updated.encode("utf-8"))
         syn = _quick_syntax_check(p)
-        return {"text": f"Исправлено ({n} место): {p}{note}{syn}", "ok": not syn, "file": str(p)}
+        return {"text": f"Исправлено ({n} место): {p}{note}{syn}", "ok": not syn, "file": str(p), "diff": diff_text}
 
     if name == "undo_edit":
         p = _path(args["path"])

@@ -219,17 +219,15 @@ class Api:
         self._dictate_stop.set()
 
     def speak(self, text: str) -> dict:
-        """Прочитать ответ вслух (кнопка 🔊 в окне). Длинное — только начало."""
+        """Прочитать ответ вслух (кнопка 🔊 в окне или под конкретным ответом). Без обрезки, с возможностью стоп."""
         from ..voice import Voice
         text = (text or "").strip()
         if not text:
             return {"ok": False}
-        if len(text) > 900:
-            text = text[:900].rsplit(".", 1)[0] + "."
         if self._speaker is None:
             self._speaker = Voice()
         self._speaker.stop()
-        self._speaker.say(text)
+        threading.Thread(target=self._speaker.say, args=(text,), daemon=True).start()
         return {"ok": True}
 
     def stop_speak(self) -> None:
@@ -281,6 +279,98 @@ class Api:
         if chat_id == self._chat.id:
             self._chat = agent_loop.Chat()
         return {"ok": True}
+
+    def pin_chat(self, chat_id: str, pinned: bool) -> dict:
+        c = self._chat if chat_id == self._chat.id else agent_loop.Chat(chat_id)
+        c.pinned = bool(pinned)
+        c.save()
+        return {"ok": True}
+
+    def rename_chat(self, chat_id: str, title: str) -> dict:
+        title = (title or "").strip()[:80]
+        if not title:
+            return {"ok": False}
+        c = self._chat if chat_id == self._chat.id else agent_loop.Chat(chat_id)
+        c.title = title
+        c.save()
+        return {"ok": True, "title": title}
+
+    def regenerate(self) -> dict:
+        """Перегенерировать последний ответ в текущем чате."""
+        if self._busy:
+            return {"ok": False}
+        last_text = self._chat.pop_last_turn()
+        if not last_text:
+            return {"ok": False}
+        return {"ok": True, "text": last_text, "display": self._chat.display}
+
+    def edit_last_user(self) -> dict:
+        """Вернуть последнее сообщение пользователя в поле ввода для редактирования."""
+        if self._busy:
+            return {"ok": False}
+        last_text = self._chat.pop_last_turn()
+        if not last_text:
+            return {"ok": False}
+        return {"ok": True, "text": last_text, "display": self._chat.display}
+
+    def capture_screen(self) -> dict:
+        """Сделать снимок экрана (1-клик 📸) и вернуть путь + превью."""
+        import base64
+        import io
+        from PIL import ImageGrab
+        try:
+            if self._window is not None:
+                self._window.hide()
+                time.sleep(0.22)
+            im = ImageGrab.grab(all_screens=False)
+        finally:
+            if self._window is not None:
+                try:
+                    self._window.show()
+                except Exception:
+                    pass
+        up_dir = config.DATA_DIR / "studio" / "uploads"
+        up_dir.mkdir(parents=True, exist_ok=True)
+        p = up_dir / f"screen_{time.strftime('%Y%m%d_%H%M%S')}.png"
+        im.save(p, "PNG")
+        th = im.copy()
+        th.thumbnail((320, 320))
+        buf = io.BytesIO()
+        th.save(buf, "JPEG", quality=80)
+        prev = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+        return {"ok": True, "path": str(p), "name": p.name, "preview": prev}
+
+    def save_dropped_file(self, name: str, data_url: str) -> dict:
+        """Сохранить файл, перетащенный мышкой в окно (Drag & Drop)."""
+        import base64
+        if not data_url or "," not in data_url:
+            return {"ok": False}
+        _, b64 = data_url.split(",", 1)
+        safe = re.sub(r'[<>:"/\\|?*]', "_", (name or "file.bin").strip())[:120] or "file.bin"
+        up_dir = config.DATA_DIR / "studio" / "uploads"
+        up_dir.mkdir(parents=True, exist_ok=True)
+        p = up_dir / f"{time.strftime('%Y%m%d_%H%M%S')}_{safe}"
+        try:
+            p.write_bytes(base64.b64decode(b64))
+            is_img = p.suffix.lower() in agent_loop.IMG_EXT
+            return {"ok": True, "path": str(p), "name": safe, "is_image": is_img}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def notify_done(self) -> None:
+        """Мягкий сигнал и подсветка на панели задач, когда долгая задача завершилась в фоне."""
+        try:
+            import winsound
+            winsound.MessageBeep(winsound.MB_OK)
+        except Exception:
+            pass
+        try:
+            if self._window is not None:
+                hwnd = ctypes.windll.user32.FindWindowW(None, self._window.title)
+                if hwnd:
+                    ctypes.windll.user32.FlashWindow(hwnd, True)
+        except Exception:
+            pass
 
     def save_pasted_image(self, data_url: str) -> dict:
         """Сохранить вставленный из буфера (Ctrl+V) скриншот в data/studio/uploads/."""
