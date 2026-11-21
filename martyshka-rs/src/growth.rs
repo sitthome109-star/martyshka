@@ -142,3 +142,25 @@ pub fn take_tags(text: &str, source: &str) -> usize {
     }
     n
 }
+
+/// Двустороннее объединение уроков опыта без дублей.
+pub fn merge_lessons(incoming: Vec<Lesson>) -> Vec<Lesson> {
+    let _g = LOCK.lock();
+    let mut list = items();
+    for inc in incoming {
+        let key = inc.text.trim().to_lowercase();
+        if key.is_empty() {
+            continue;
+        }
+        if let Some(existing) = list.iter_mut().find(|x| x.text.trim().to_lowercase() == key) {
+            existing.count = existing.count.max(inc.count);
+            if inc.when > existing.when {
+                existing.when = inc.when;
+            }
+        } else {
+            list.push(inc);
+        }
+    }
+    save(&list);
+    list
+}

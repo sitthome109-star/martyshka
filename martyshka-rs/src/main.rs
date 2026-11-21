@@ -21,7 +21,7 @@ mod telegram;
 mod tools;
 
 #[cfg(windows)]
-const EMBEDDED_UI: &str = include_str!("../../martyshka/studio/ui/index.html");
+const EMBEDDED_UI: &str = include_str!("../ui/index.html");
 
 use parking_lot::Mutex;
 use serde_json::{json, Map, Value};
@@ -135,8 +135,20 @@ fn run_desktop_ui() {
     }
     let window = wb.build(&event_loop).expect("window");
 
-    let ui_path = config::project_dir().join("martyshka").join("studio").join("ui").join("index.html");
+    let ui_path = config::project_dir().join("martyshka-rs").join("ui").join("index.html");
     let html = std::fs::read_to_string(&ui_path).unwrap_or_else(|_| EMBEDDED_UI.to_string());
+
+    // Фоновая двусторонняя синхронизация памяти ПК ↔ 24/7 Сервер (сразу + каждые 3 мин)
+    rt.spawn(async {
+        loop {
+            let _ = govorilka_ws::sync_memory_with_remote().await;
+            tokio::time::sleep(std::time::Duration::from_secs(180)).await;
+        }
+    });
+    // Фоновый Telegram-бот для управления сервером и ПК с телефона
+    rt.spawn(async {
+        telegram::run_forever().await;
+    });
 
     // Мост window.pywebview.api → Rust IPC, полностью совместимый с существующим index.html
     let init_script = r#"
@@ -435,6 +447,7 @@ fn run_desktop_ui() {
                         }
                     }
                     "memory_info" => {
+                        let _ = govorilka_ws::sync_memory_with_remote().await;
                         let people: Vec<Value> = longmem::load_people()
                             .into_iter()
                             .map(|(name, p)| json!({"name": name, "facts": p.facts, "anger": longmem::anger(&name), "last": p.last_seen, "count": p.count}))
@@ -603,6 +616,8 @@ fn run_desktop_ui() {
                                 "voice": s.govorilka_voice_id,
                                 "model": s.govorilka_model,
                                 "personality_extra": s.personality_extra,
+                                "greet": s.govorilka_greet,
+                                "proactive": s.govorilka_proactive,
                                 "remote": false,
                                 "remote_url": s.govorilka_remote_url,
                                 "log": govorilka_ws::recent_log(100),
@@ -654,6 +669,23 @@ fn run_desktop_ui() {
                             } else {
                                 govorilka_ws::enqueue_external_cmd(payload);
                                 json!({"ok": true, "message": "Аватарка обновлена ✓"})
+                            }
+                        } else if act == "greet" || act == "proactive" {
+                            let on = val.and_then(Value::as_bool).unwrap_or(false);
+                            let key = if act == "greet" { "GOVORILKA_GREET" } else { "GOVORILKA_PROACTIVE" };
+                            let mut mp = Map::new();
+                            mp.insert(key.into(), json!(on));
+                            let _ = config::patch(mp.clone());
+                            if let Some(r) = govorilka_ws::remote_action(json!({"act": "settings", "patch": mp})).await {
+                                r
+                            } else {
+                                json!({"ok": true, "message": "Настройка сохранена ✓"})
+                            }
+                        } else if act == "sync_memory" {
+                            if govorilka_ws::sync_memory_with_remote().await {
+                                json!({"ok": true, "message": "Память ПК ↔ Сервер синхронизирована ✓"})
+                            } else {
+                                json!({"ok": false, "message": "Сервер недоступен для синхронизации"})
                             }
                         } else if act == "model" {
                             let m = val.and_then(Value::as_str).unwrap_or(deepseek::FLASH).to_string();
@@ -776,7 +808,7 @@ mod tests {
 
     #[test]
     fn test_govorilka_clean_reply_tags() {
-        let out = govorilka_ws::clean_reply_tags("[ТОН: 0] {весело} Привет, брат! [МОЛЧУ]", "sitth");
-        assert_eq!(out, "{весело} Привет, брат!");
+        let out = govorilka_ws::clean_reply_tags("[ТОН: 0] {весело} Привет, sitthome! [МОЛЧУ]", "sitthome");
+        assert_eq!(out, "{весело} Привет, sitthome!");
     }
 }

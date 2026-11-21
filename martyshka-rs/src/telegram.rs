@@ -1,11 +1,90 @@
-//! Telegram-сервис на Rust: работает 24/7 (текст, фото, документы, режим агента).
-use crate::{agent, config, deepseek};
+//! Telegram-сервис на Rust: работает 24/7 (текст, фото, документы, режим агента + управление сервером Говорилки).
+use crate::{agent, config, deepseek, govorilka_ws};
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
+
+async fn exec_gov(payload: Value) -> String {
+    if let Some(r) = govorilka_ws::remote_action(payload.clone()).await {
+        return r.get("message").and_then(Value::as_str).unwrap_or("Готово ✓").to_string();
+    }
+    if govorilka_ws::is_running() {
+        let r = govorilka_ws::apply_control_action(&payload);
+        return r.get("message").and_then(Value::as_str).unwrap_or("Готово ✓").to_string();
+    }
+    "Сервер Говорилки сейчас не отвечает.".into()
+}
+
+async fn handle_gov_tg_cmd(text: &str) -> Option<String> {
+    let t = text.trim();
+    let low = t.to_lowercase();
+    if low == "/help" || low == "/govhelp" {
+        return Some(
+            "Управление 24/7 сервером Говорилки из Telegram:\n\
+/gov — статус и кто в войсе\n\
+/say <текст> — сказать в войс\n\
+/chat <текст> — написать в #общий\n\
+/join · /leave — зайти / выйти с войса\n\
+/stop — замолчать · /mute · /unmute — тихий режим\n\
+/morni — диалог с Морни (4 мин)\n\
+/char <текст> — сменить характер на сервере\n\
+/sync — синхронизировать память ПК ↔ Сервер\n\
+/update — обновить сервер с GitHub"
+                .into(),
+        );
+    }
+    if low == "/gov" || low == "говорилка" || low.contains("кто в говорилке") || low.contains("кто в войсе") {
+        let st = if let Some(r) = govorilka_ws::remote_status().await {
+            r
+        } else {
+            govorilka_ws::external_state()
+        };
+        let on = st.get("running").and_then(Value::as_bool).unwrap_or(false);
+        let iv = st.get("in_voice").and_then(Value::as_bool).unwrap_or(false);
+        let users: Vec<&str> = st
+            .get("users")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        return Some(format!(
+            "Говорилка 24/7: {} · В войсе: {}\nУчастники ({}): {}",
+            if on { "В сети ✅" } else { "Не в сети ❌" },
+            if iv { "да" } else { "нет" },
+            users.len(),
+            if users.is_empty() { "никого".into() } else { users.join(", ") }
+        ));
+    }
+    if low == "/join" { return Some(exec_gov(json!({"act": "join_voice"})).await); }
+    if low == "/leave" { return Some(exec_gov(json!({"act": "leave_voice"})).await); }
+    if low == "/stop" { return Some(exec_gov(json!({"act": "silence"})).await); }
+    if low == "/mute" { return Some(exec_gov(json!({"act": "mute", "val": true})).await); }
+    if low == "/unmute" { return Some(exec_gov(json!({"act": "mute", "val": false})).await); }
+    if low == "/morni" { return Some(exec_gov(json!({"act": "morni"})).await); }
+    if low == "/update" { return Some(exec_gov(json!({"act": "self_update"})).await); }
+    if low == "/sync" {
+        return Some(if govorilka_ws::sync_memory_with_remote().await {
+            "Память ПК ↔ Сервер синхронизирована ✓".into()
+        } else {
+            "Не удалось синхронизировать память (проверь связь с сервером).".into()
+        });
+    }
+    if let Some(rest) = t.strip_prefix("/say ").or_else(|| t.strip_prefix("скажи в войс ")).or_else(|| t.strip_prefix("Скажи в войс ")) {
+        return Some(exec_gov(json!({"act": "say", "text": rest.trim()})).await);
+    }
+    if let Some(rest) = t.strip_prefix("/chat ").or_else(|| t.strip_prefix("напиши в говорилку ")).or_else(|| t.strip_prefix("Напиши в говорилку ")) {
+        return Some(exec_gov(json!({"act": "chat", "channel": "общий", "text": rest.trim()})).await);
+    }
+    if let Some(rest) = t.strip_prefix("/char ") {
+        let mut mp = Map::new();
+        mp.insert("PERSONALITY_EXTRA".into(), json!(rest.trim()));
+        let _ = config::patch(mp.clone());
+        return Some(exec_gov(json!({"act": "settings", "patch": mp})).await);
+    }
+    None
+}
 
 fn api_url(token: &str, method: &str) -> String {
     format!("https://api.telegram.org/bot{token}/{method}")
@@ -91,6 +170,10 @@ pub async fn run_forever() {
             }
 
             if text.is_empty() {
+                continue;
+            }
+            if let Some(gov_ans) = handle_gov_tg_cmd(&text).await {
+                send_msg(&client, &token, owner, &gov_ans).await;
                 continue;
             }
             let cid = agent::new_chat_id();

@@ -79,12 +79,16 @@ pub struct Settings {
     pub govorilka_fish_model: String,
     #[serde(default, rename = "GOVORILKA_REMOTE_URL")]
     pub govorilka_remote_url: String,
+    #[serde(default = "d_true", rename = "GOVORILKA_GREET")]
+    pub govorilka_greet: bool,
+    #[serde(default, rename = "GOVORILKA_PROACTIVE")]
+    pub govorilka_proactive: bool,
 }
 
 fn d_gov_model() -> String { "deepseek-flash".into() }
 
 fn d_name() -> String { "Мартышка".into() }
-fn d_nick() -> String { "братан".into() }
+fn d_nick() -> String { "sitthome".into() }
 fn d_mode() -> String { "bro".into() }
 fn d_jarvis() -> String { "сэр".into() }
 fn d_ds_url() -> String { "https://api.deepseek.com".into() }

@@ -1000,30 +1000,33 @@ async function voicePicker(c,f){
 
 async function renderGov(){ const box=$('#pg');
   const CMDS=[
-    ['!войс','Зайти в голосовой канал'],
-    ['!выйди','Выйти из войса (остаться в чате)'],
-    ['!стоп','Мгновенно замолчать'],
-    ['!тише / !слушай','Тихий режим / снова отвечать'],
-    ['!скажи <текст>','Озвучить фразу в войс'],
-    ['!напиши <текст>','Написать от имени Мартышки'],
-    ['!тема <тема>','Вкинуть тему в войс'],
-    ['!морни [тема]','Разговор или спор с Морни (4 мин)'],
-    ['!голос <имя>','Сменить голос Fish Audio'],
-    ['!движок free|pro|drama','Переключить движок озвучки'],
-    ['!мозг flash|pro','Переключить модель DeepSeek'],
-    ['!кто','Кто сейчас в войсе'],
-    ['!память <имя>','Что помнит о человеке'],
-    ['!запомни имя | факт','Записать факт в память'],
-    ['!забудь имя | факт','Удалить факт из памяти'],
-    ['!успокойся [имя]','Сбросить злость на человека/всех'],
-    ['!сброс','Очистить контекст текущей беседы'],
-    ['!баланс / !статус','Балансы API и статус 24/7'],
-    ['!обновись','Обновить Мартышку на сервере с GitHub']
+    ['м!список','Полный список всех команд (для всех)'],
+    ['м!войс','Зайти в голосовой канал (для всех)'],
+    ['м!выйди','Выйти из войса в чат (для всех)'],
+    ['м!кто','Кто сейчас в войсе (для всех)'],
+    ['м!стоп','Мгновенно замолчать'],
+    ['м!тихо / м!слушай','Тихий режим / снова отвечать'],
+    ['м!скажи <текст>','Озвучить фразу в войс'],
+    ['м!напиши <текст>','Написать от имени Мартышки'],
+    ['м!тема <тема>','Вкинуть тему в войс'],
+    ['м!морни [тема]','Разговор или спор с Морни (4 мин)'],
+    ['м!голос <имя>','Сменить голос Fish Audio'],
+    ['м!движок free|pro|drama','Переключить движок озвучки'],
+    ['м!мозг flash|pro','Переключить модель DeepSeek'],
+    ['м!привет вкл|выкл','Живые приветствия при входе'],
+    ['м!актив вкл|выкл','Проактивные реплики в войсе'],
+    ['м!память <имя>','Что помнит о человеке'],
+    ['м!запомни имя | факт','Записать факт в память'],
+    ['м!забудь имя | факт','Удалить факт из памяти'],
+    ['м!остынь [имя]','Сбросить злость на человека/всех'],
+    ['м!сброс','Очистить контекст текущей беседы'],
+    ['м!баланс / м!статус','Балансы API и статус 24/7'],
+    ['м!обновись','Обновить Мартышку на сервере с GitHub']
   ];
   const fmtUp=s=>{ if(!s) return ''; const h=Math.floor(s/3600), m=Math.floor((s%3600)/60); return h?`${h}ч ${m}м`:`${m}м ${s%60}с`; };
   const fill=async first=>{ const g=await api().gov_info();
     if(first){ box.innerHTML=`<h2>Говорилка · 24/7</h2>
-      <p class="pd">Мартышка подключена напрямую к серверу как «${esc(g.nick)}» — без второго окна и кабелей. Выход из войса и команды работают <b>только от тебя</b> (в чате и голосом в войсе).</p>
+      <p class="pd">Мартышка подключена напрямую к серверу как «${esc(g.nick)}» — без второго окна и кабелей. Префикс команд <b>м!</b> (не пересекается с Морни). Вход/выход (<b>м!войс</b>, <b>м!выйди</b> и голосом «Мартышка, выйди») доступны всем на сервере.</p>
       <div class="sec">
         <div class="card" style="margin:12px 0">
           <h4>Прямое подключение <span class="pill" id="gst"></span> <span class="pill" id="gvoice"></span> <span class="pill" id="gmode"></span> <small id="gup" style="margin-left:auto;color:var(--muted);font-weight:400"></small></h4>
@@ -1035,6 +1038,7 @@ async function renderGov(){ const box=$('#pg');
             <button class="btn" id="gMute">Тихий режим</button>
             <button class="btn" id="gMorni">Поговорить с Морни</button>
             <button class="btn" id="gClear">Сбросить контекст</button>
+            <button class="btn" id="gSyncMem" title="Объединить память и опыт между ПК и сервером">🧠 Синхр. память</button>
             <button class="btn pri" id="gUpdate" style="display:none" title="Скачать свежий код с GitHub, пересобрать и перезапустить Мартышку на сервере">🔄 Обновить сервер</button>
           </div>
         </div>
@@ -1054,11 +1058,13 @@ async function renderGov(){ const box=$('#pg');
         </div>
         <div class="field"><div class="lab"><b>Мозг на сервере</b><small>Flash отвечает мгновенно, Pro — думает глубже.</small></div><div class="ctl"><select class="in" id="gModel"><option value="deepseek-flash">DeepSeek Flash</option><option value="deepseek-v4-pro">DeepSeek Pro</option></select></div></div>
         <div class="field"><div class="lab"><b>Озвучка в войсе</b><small>S2.1 Pro Free — бесплатно со стабильными русскими ударениями. Drama 3 — максимум эмоций (платно).</small></div><div class="ctl"><select class="in" id="gFish">${g.fish_models.map(([k,n])=>`<option value="${k}" ${k===g.fish_model?'selected':''}>${esc(n)}</option>`).join('')}</select></div></div>
-        <div class="field wide"><div class="lab"><b>Характер и доп. инструкции на сервере</b><small>Любые правила поведения (например: «будь мягче», «шути дерзко», «подкалывай Enbulih») — применяются сразу со следующей реплики.</small></div><div class="ctl" style="flex-direction:column;align-items:stretch"><textarea class="in" id="gPers" placeholder="Например: общайся дерзко, шути по-чёрному, всегда защищай брата..."></textarea><div style="display:flex;justify-content:flex-end;margin-top:6px"><button class="btn pri" id="gSavePers">Сохранить характер</button></div></div></div>
+        <div class="field"><div class="lab"><b>Живые приветствия при входе</b><small>Когда кто-то заходит в голосовой канал — Мартышка сама коротко здоровается по имени (вспоминая факт о нём).</small></div><div class="ctl"><div class="tog ${g.greet?'on':''}" id="gGreet"></div></div></div>
+        <div class="field"><div class="lab"><b>Проактивность в войсе</b><small>Раз в пару минут может сама вставить короткую меткую реплику в общий разговор, если правда есть что сказать.</small></div><div class="ctl"><div class="tog ${g.proactive?'on':''}" id="gProact"></div></div></div>
+        <div class="field wide"><div class="lab"><b>Характер и доп. инструкции на сервере</b><small>Любые правила поведения (например: «будь мягче», «шути дерзко», «подкалывай Enbulih») — применяются сразу со следующей реплики.</small></div><div class="ctl" style="flex-direction:column;align-items:stretch"><textarea class="in" id="gPers" placeholder="Например: общайся дерзко, шути по-чёрному, всегда защищай sitthome..."></textarea><div style="display:flex;justify-content:flex-end;margin-top:6px"><button class="btn pri" id="gSavePers">Сохранить характер</button></div></div></div>
         <div class="field"><div class="lab"><b>Ник и аватарка в Говорилке</b><small>Выбери любую картинку — сама сожмётся в 96×96 и сразу обновится на сервере.</small></div><div class="ctl"><input class="in" id="gNick" style="width:125px" value="${esc(g.nick)}"><button class="btn" id="gSaveNick">Ник</button><input type="file" id="gAvFile" accept="image/*" style="display:none"><button class="btn" id="gAvBtn">Аватарка</button></div></div>
         <div class="field"><div class="lab"><b>Пульт удалённого сервера</b><small>Когда Мартышка запущена на сервере Говорилки, вставь сюда её адрес (например, https://gv.34-107-2-200.sslip.io/martyshka-api).</small></div><div class="ctl"><input class="in" id="gRemUrl" placeholder="https://.../martyshka-api" value="${esc(g.remote_url||'')}"><button class="btn" id="gSaveRem">ОК</button></div></div>
       </div>
-      <div class="sec"><h3>Команды хозяина в чате Говорилки</h3><p class="sd">Кликни по команде, чтобы скопировать. В войсе скажи «Мартышка, выйди» — выйдет только по твоей просьбе.</p>
+      <div class="sec"><h3>Команды Мартышки в чате Говорилки (префикс «м!»)</h3><p class="sd">Кликни по команде, чтобы скопировать. Полный список в чате: <b>м!список</b>.</p>
         <div class="cmd-grid" id="gCmds">${CMDS.map(([c,d])=>`<button class="cmd-chip" data-c="${esc(c.split(' ')[0])}"><b>${esc(c)}</b><small>${esc(d)}</small></button>`).join('')}</div>
       </div>
       <div class="sec"><h3>Голос в Говорилке</h3><div id="gVoice" style="padding:8px 0 14px"></div></div>
@@ -1083,6 +1089,9 @@ async function renderGov(){ const box=$('#pg');
       $('#gMute').onclick=async()=>{ const next=!$('#gMute').classList.contains('pri'); toast((await api().gov_action('mute',next)).message); fill(false); };
       $('#gMorni').onclick=async()=>{ toast((await api().gov_action('morni')).message); };
       $('#gClear').onclick=async()=>{ toast((await api().gov_action('clear')).message); };
+      $('#gSyncMem').onclick=async()=>{ toast((await api().gov_action('sync_memory')).message); };
+      $('#gGreet').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('greet',ev.target.classList.contains('on'))).message); };
+      $('#gProact').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('proactive',ev.target.classList.contains('on'))).message); };
       $('#gUpdate').onclick=async()=>{ if(!confirm('Обновить серверную Мартышку с GitHub и перезапустить? (~30–60 сек)')) return; toast((await api().gov_action('self_update')).message); };
       $('#gDoSay').onclick=async()=>{ const t=$('#gSay').value.trim(); if(!t) return; toast((await api().gov_action('say',t)).message); $('#gSay').value=''; };
       $('#gDoChat').onclick=async()=>{ const t=$('#gSay').value.trim(); if(!t) return; toast((await api().gov_action('chat',t,$('#gChan').value)).message); $('#gSay').value=''; };

@@ -22,7 +22,7 @@ pub const DEFAULT_VOICE: &str = "b871e425b6c0442baa5cf73f6c336bbe";
 static CLIENT: Lazy<Client> = Lazy::new(|| {
     Client::builder()
         .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_secs(180))
         .build()
         .expect("fish client")
 });

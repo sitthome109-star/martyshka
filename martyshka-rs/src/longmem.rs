@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const OWNER: &str = "брат";
+pub const OWNER: &str = "sitthome";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Person {
@@ -82,10 +82,29 @@ pub fn is_owner(name: &str) -> bool {
 }
 
 pub fn load_people() -> HashMap<String, Person> {
-    fs::read_to_string(people_file())
+    let raw: HashMap<String, Person> = fs::read_to_string(people_file())
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let mut out: HashMap<String, Person> = HashMap::new();
+    for (k, p) in raw {
+        let nk = norm(&k);
+        let e = out.entry(nk).or_default();
+        for f in p.facts {
+            let fl = f.trim().to_lowercase();
+            if !fl.is_empty() && !e.facts.iter().any(|x| x.trim().to_lowercase() == fl) {
+                e.facts.push(f);
+            }
+        }
+        for t in p.topics {
+            if !e.topics.contains(&t) { e.topics.push(t); }
+        }
+        e.count = e.count.max(p.count);
+        if p.last_seen > e.last_seen { e.last_seen = p.last_seen; e.where_seen = p.where_seen; }
+        if e.first_seen.is_empty() || (!p.first_seen.is_empty() && p.first_seen < e.first_seen) { e.first_seen = p.first_seen; }
+        if p.anger_since >= e.anger_since { e.anger = p.anger; e.anger_since = p.anger_since; }
+    }
+    out
 }
 
 fn save_people(map: &HashMap<String, Person>) {
@@ -106,6 +125,68 @@ pub fn load_days() -> BTreeMap<String, String> {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
+}
+
+fn save_days(map: &BTreeMap<String, String>) {
+    let p = days_file();
+    if let Some(parent) = p.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(text) = serde_json::to_string_pretty(map) {
+        let tmp = p.with_extension("tmp");
+        if fs::write(&tmp, text).is_ok() {
+            let _ = fs::rename(&tmp, &p);
+        }
+    }
+}
+
+/// Двустороннее объединение карточек людей без потери фактов.
+pub fn merge_people(incoming: HashMap<String, Person>) -> HashMap<String, Person> {
+    let _g = LOCK.lock();
+    let mut cur = load_people();
+    for (raw_name, inc) in incoming {
+        let key = norm(&raw_name);
+        let entry = cur.entry(key).or_default();
+        for f in inc.facts {
+            let fl = f.trim().to_lowercase();
+            if !fl.is_empty() && !entry.facts.iter().any(|x| x.trim().to_lowercase() == fl) {
+                entry.facts.push(f);
+            }
+        }
+        for t in inc.topics {
+            if !entry.topics.contains(&t) {
+                entry.topics.push(t);
+            }
+        }
+        entry.count = entry.count.max(inc.count);
+        if inc.last_seen > entry.last_seen {
+            entry.last_seen = inc.last_seen;
+            entry.where_seen = inc.where_seen;
+        }
+        if entry.first_seen.is_empty() || (!inc.first_seen.is_empty() && inc.first_seen < entry.first_seen) {
+            entry.first_seen = inc.first_seen;
+        }
+        if inc.anger_since > entry.anger_since {
+            entry.anger = inc.anger;
+            entry.anger_since = inc.anger_since;
+        }
+    }
+    save_people(&cur);
+    cur
+}
+
+/// Двустороннее объединение сводок дней.
+pub fn merge_days(incoming: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let _g = LOCK.lock();
+    let mut cur = load_days();
+    for (d, txt) in incoming {
+        let replace = cur.get(&d).map(|old| txt.len() > old.len()).unwrap_or(true);
+        if replace && !txt.trim().is_empty() {
+            cur.insert(d, txt);
+        }
+    }
+    save_days(&cur);
+    cur
 }
 
 pub fn log(source: &str, who: &str, text: &str, reply: &str) {
@@ -261,7 +342,7 @@ pub fn context(source: &str, today_lines: usize, n_days: usize) -> String {
     let ps = load_people();
     if let Some(owner) = ps.get(OWNER) {
         if !owner.facts.is_empty() {
-            parts.push(format!("Что ты знаешь о хозяине (брат / sitth): {}", owner.facts.join("; ")));
+            parts.push(format!("Что ты знаешь о хозяине (sitthome): {}", owner.facts.join("; ")));
         }
     }
     parts.join("\n\n")

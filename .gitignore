@@ -1,5 +1,6 @@
 # Python
 .venv/
+мартышка.old/
 martyshka-rs/target/
 __pycache__/
 *.pyc
