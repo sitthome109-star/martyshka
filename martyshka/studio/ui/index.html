@@ -633,10 +633,12 @@ async function renderGov(){ const box=$('#pg');
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn pri" id="gJoin">Зайти в войс</button><button class="btn" id="gLeave">Выйти с войса</button><button class="btn red" id="gQuit">Уйти с сервера совсем</button></div>
         ${g.cable?'':'<div class="note" style="margin:12px 0 0">Нужен виртуальный кабель <b>VB-CABLE</b>.</div>'}</div>
         <div class="field"><div class="lab"><b>Мозг в войсе</b><small>Flash отвечает быстрее, Pro — умнее.</small></div><div class="ctl"><select class="in" id="gModel"><option value="deepseek-flash">DeepSeek Flash</option><option value="deepseek-v4-pro">DeepSeek Pro</option></select></div></div>
+        <div class="field"><div class="lab"><b>Режим диалога</b><small>Откликается только на имя «Мартышка», сама разговор не заводит, дослушивает собеседника до конца (5 с тишины) и не говорит поверх: заговорили во время её ответа — замолкает и слушает.</small></div><div class="ctl"><div class="tog ${g.dialog?'on':''}" id="gDialog"></div></div></div>
         <div class="field"><div class="lab"><b>Сидеть в Говорилке всегда</b><small>Заходит сама при включении ПК и возвращается, если выкинуло.</small></div><div class="ctl"><div class="tog ${g.autostart?'on':''}" id="gAuto"></div></div></div></div>
       <div class="sec"><h3>Голос в Говорилке</h3><div id="gVoice" style="padding:8px 0 14px"></div></div>
       <div class="sec"><h3>Что там говорили</h3><div class="log" id="gLog" style="margin:8px 0 14px"></div></div>`;
       $('#gModel').value=g.model; $('#gModel').onchange=async()=>toast((await api().gov_action('model',$('#gModel').value)).message);
+      $('#gDialog').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('dialog',ev.target.classList.contains('on'))).message); };
       $('#gAuto').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('autostart',ev.target.classList.contains('on'))).message); };
       $('#gJoin').onclick=async()=>{ toast((await api().gov_action('join')).message); fill(); };
       $('#gLeave').onclick=async()=>{ toast((await api().gov_action('leave')).message); fill(); };

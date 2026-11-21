@@ -332,12 +332,18 @@ def _clean_transcript(text: str) -> str:
         if len(re.findall(r"[А-Яа-яЁёA-Za-z]", text)) < 3:
             return ""
         text = re.sub(r"\s+", " ", text).strip(" 。，、")
-    if GLUED_RE.search(text):
+    letters = len(re.findall(r"[А-Яа-яЁёA-Za-z]", text))
+    glued = bool(GLUED_RE.search(text)) or (letters > 20 and text.count(" ") < letters / 14) \
+        or (letters >= 12 and " " not in text.strip()) \
+        or len(re.findall(r"[а-яёa-z][.,!?:;][А-ЯЁA-Zа-яёa-z]", text)) >= 2      # «слово.Слово?слово»
+    if glued:
         try:
             fixed = ask("Расставь пробелы между словами в распознанной речи. Ничего не меняй, не исправляй и не "
                         "добавляй — только пробелы (и пробел после знаков препинания). Ответ — только текст.\n\n"
                         + text, model=FLASH, max_tokens=300, temperature=0)
-            if fixed and fixed.replace(" ", "").lower() == text.replace(" ", "").lower():
+            import difflib
+            a, b = fixed.replace(" ", "").lower(), text.replace(" ", "").lower()
+            if fixed and difflib.SequenceMatcher(None, a, b).ratio() >= 0.95:   # только пробелы (±пара букв)
                 text = fixed
         except Exception:
             pass

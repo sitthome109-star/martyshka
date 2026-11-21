@@ -471,7 +471,7 @@ class Api:
         return {"status": g.status(), "running": g.is_running(), "cable": g.cable_ready(),
                 "voice": config.GOVORILKA_VOICE_ID or config.VOICE_ID, "model": g.brain_model(),
                 "autostart": bool(config.GOVORILKA_AUTOSTART) and g.autostart_enabled(),
-                "nick": config.GOVORILKA_NICK, "log": g.recent_log(40)}
+                "nick": config.GOVORILKA_NICK, "log": g.recent_log(40), "dialog": bool(config.GOVORILKA_DIALOG)}
 
     def gov_action(self, action: str, value=None) -> dict:
         from .. import govorilka as g
@@ -485,6 +485,10 @@ class Api:
         elif action == "model" and value:
             g.save_setting("GOVORILKA_MODEL", value)
             msg = "Мозг в Говорилке: " + ("Pro" if "pro" in value else "Flash")
+        elif action == "dialog":
+            g.save_setting("GOVORILKA_DIALOG", bool(value))
+            msg = ("Режим диалога: отвечаю только по имени, дослушиваю и не говорю поверх."
+                   if value else "Режим диалога выключен: могу сама заводить разговор с Морни.")
         elif action == "autostart":
             g.set_autostart(bool(value))
             msg = "Буду сидеть в Говорилке всегда." if value else "Сама заходить не буду."

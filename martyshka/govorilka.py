@@ -49,6 +49,8 @@ NAME_RE = re.compile(r"мартыш|мартиш|ртышк|martysh|martish|mart
 
 # ---------- поведение в разговоре (брат: «откликается на имя и слышит собеседника до конца») ----------
 NAME_ONLY = True          # откликаться ТОЛЬКО на своё имя — в чужие разговоры не лезть
+YIELD_AFTER = 0.6         # с: режим диалога — кто-то говорит столько поверх Мартышки → она замолкает и уступает
+ECHO = {"heard_self": False}  # самопроверка при входе: если в «петле» слышен её же голос — не уступаем (было бы эхо)
 STICKY_DIALOG = True      # режим диалога: назвали по имени — дальше отвечаем ТОМУ ЖЕ собеседнику и без имени,
                           # пока не истекло config.GOVORILKA_FOLLOWUP и не исчерпана цепочка ответов
 CHIME_IN = False          # злая Мартышка сама влезает в чужие разговоры (по просьбе брата выключено)
@@ -168,7 +170,7 @@ def _reload_settings() -> None:
     except Exception:
         return
     for k in ("GOVORILKA_VOICE_ID", "VOICE_ID", "GOVORILKA_MODEL", "GOVORILKA_FOLLOWUP", "GOVORILKA_MAX_CHAIN",
-              "BRAIN_MODE", "DEEPSEEK_KEY", "FISH_KEY", "FISH_MODEL"):
+              "BRAIN_MODE", "DEEPSEEK_KEY", "FISH_KEY", "FISH_MODEL", "GOVORILKA_DIALOG"):
         if k in saved:
             setattr(config, k, saved[k])
 
@@ -587,7 +589,10 @@ class Listener:
                 self.hearing = speaking_now or (heard and silence < 0.5)
                 if speaking_now:
                     self.last_voice_at = time.time()
-                if self.paused.is_set():
+                # пока Мартышка говорит — обычно не слушаем; в режиме диалога слушаем и тогда: если её перебили,
+                # фраза собеседника не должна потеряться (свой голос в эту петлю не попадает — сервер его не возвращает)
+                if self.paused.is_set() and not (config.GOVORILKA_DIALOG and not ECHO["heard_self"]
+                                                 and (speaking_now or heard)):
                     speech, silence, heard = [], 0.0, False
                     continue
                 if speaking_now:
@@ -630,6 +635,7 @@ class Mouth:
         self.synth_stats: list[tuple[float, float]] = []      # (секунд звука, секунд синтеза)
         self.fillers: dict = {}
         self._filler_voice = ""
+        self.stopped = threading.Event()                     # «замолчи» — кто-то заговорил поверх
         threading.Thread(target=self._synth_loop, daemon=True).start()
         threading.Thread(target=self._play_loop, daemon=True).start()
 
@@ -637,9 +643,11 @@ class Mouth:
         while True:
             text = self._text_q.get()
             try:
+                if self.stopped.is_set():
+                    continue
                 t0 = time.time()
                 audio = self.fish.speak_all(text, voice_id(), temperature=0.75)
-                if len(audio):
+                if len(audio) and not self.stopped.is_set():
                     self.synth_stats.append((len(audio) / self.sr, time.time() - t0))
                     self._audio_q.put(audio)
             except Exception as e:
@@ -653,15 +661,50 @@ class Mouth:
             try:
                 if not self.first_audio_at:
                     self.first_audio_at = time.time()
-                self.stream.write(np.clip(audio * 0.9, -1, 1).reshape(-1, 1))
-                self.stream.write(np.zeros((int(self.sr * 0.12), 1), dtype=np.float32))
+                audio = np.clip(audio * 0.9, -1, 1).reshape(-1, 1)
+                step = self.sr // 10                            # по 0,1 с — чтобы замолчать сразу, если перебили
+                for i in range(0, len(audio), step):
+                    if self.stopped.is_set():
+                        break
+                    self.stream.write(audio[i:i + step])
+                if not self.stopped.is_set():
+                    self.stream.write(np.zeros((int(self.sr * 0.12), 1), dtype=np.float32))
             finally:
                 self._audio_q.task_done()
 
     def queue(self, sentence: str) -> None:
+        if self.stopped.is_set():                        # уже уступили слово — дальше не говорим
+            return
         clean = self.prepare(sentence, "ru")
         if re.search(r"\w", clean):
             self._text_q.put(clean)
+
+    def stop(self) -> None:
+        """Замолчать посреди ответа: выкинуть всё, что ещё не прозвучало."""
+        self.stopped.set()
+        for q in (self._text_q, self._audio_q):
+            try:
+                while True:
+                    q.get_nowait()
+                    q.task_done()
+            except queue.Empty:
+                pass
+
+    def wait_yielding(self, listener) -> bool:
+        """Договорить ответ, но в режиме диалога уступить: кто-то заговорил поверх — замолкаем.
+        Возвращает True, если пришлось замолчать."""
+        talk_since = None
+        while self._text_q.unfinished_tasks or self._audio_q.unfinished_tasks:
+            if config.GOVORILKA_DIALOG and not ECHO["heard_self"] and listener.hearing:
+                talk_since = talk_since or time.time()
+                if time.time() - talk_since >= YIELD_AFTER:
+                    self.stop()
+                    return True
+            else:
+                talk_since = None
+            time.sleep(0.05)
+        time.sleep(0.4)
+        return False
 
     # Короткие «Ага» заготовлены заранее: звучат сразу, пока мозг думает (по уровню злости)
     FILLERS = {0: ["Ага.", "Так-так.", "Хм, слушаю.", "Да-да?"], 2: ["Чего тебе?", "Ну-ну.", "Ага, щас.", "Ой, всё."],
@@ -692,6 +735,7 @@ class Mouth:
             self._audio_q.put(random.choice(options).astype(np.float32))
 
     def wait(self) -> None:
+        self.stopped.clear()
         self._text_q.join()
         self._audio_q.join()
         time.sleep(0.4)                                   # доиграть буфер звуковой карты
@@ -925,7 +969,7 @@ def main() -> None:
                             relaunches = 0
                             time.sleep(1.5)
                             if time.time() - started_at < 120:
-                                mouth.say("Всем привет! Это Мартышка, ИИ. Зовите по имени, если что.")
+                                _greet_and_check_echo(mouth, listener)
                             actual = True
                     elif not want_voice() and actual:
                         listener.paused.set()
@@ -967,7 +1011,8 @@ def main() -> None:
                         pending_at = time.time()
                 # сама заводит разговор с Морни, когда в войсе давно тихо (не чаще раза в MORNI_START_EVERY)
                 quiet_for = time.time() - max(listener.last_voice_at, st["last_reply_at"], started_at)
-                if (not pending and not listener.hearing and quiet_for > next_initiative_quiet
+                if (not config.GOVORILKA_DIALOG and not pending and not listener.hearing
+                        and quiet_for > next_initiative_quiet
                         and time.time() - last_initiative > MORNI_START_EVERY):
                     import random
                     last_initiative = time.time()
@@ -1006,6 +1051,28 @@ def main() -> None:
         except Exception:
             pass
         _log("система", "вышла из Говорилки")
+
+
+def _greet_and_check_echo(mouth, listener) -> None:
+    """Поздороваться при входе и заодно проверить, не слышит ли Мартышка в «петле» сама себя.
+    Если в тишине во время её приветствия «кто-то говорит» больше половины времени — это её же голос
+    (эхо): тогда режим «уступать слово» выключается, иначе она обрывала бы каждый свой ответ."""
+    quiet_before = time.time() - listener.last_voice_at > 1.5
+    samples: list[bool] = []
+    done = threading.Event()
+
+    def sample():
+        while not done.is_set():
+            samples.append(bool(listener.hearing))
+            time.sleep(0.1)
+    threading.Thread(target=sample, daemon=True).start()
+    mouth.say("Всем привет! Это Мартышка, ИИ. Зовите по имени, если что.")
+    done.set()
+    if quiet_before and len(samples) >= 10:
+        share = sum(samples) / len(samples)
+        ECHO["heard_self"] = share > 0.5
+        _log("система", f"самопроверка эха: свой голос {'СЛЫШЕН' if ECHO['heard_self'] else 'не слышен'} "
+                        f"({share:.0%}) — {'уступать слово не буду' if ECHO['heard_self'] else 'уступаю слово, если перебьют'}")
 
 
 def _hear(audio, hallucinations) -> str:
@@ -1087,16 +1154,21 @@ def _respond(text, mouth, listener, st, initiative=False, speaker=""):
     while (listener.hearing or not listener.phrases.empty()) and time.time() < wait_until:
         time.sleep(0.1)
     listener.paused.set()
+    yielded = False
     try:
         mouth.first_audio_at = 0.0
         mouth.synth_stats.clear()
+        mouth.stopped.clear()
         if named and not with_morni:
             mouth.filler(anger)                         # «Ага» сразу, пока мозг думает
         raw = reply_stream(history, mouth, anger, with_morni, who=who, present=st["present"])
         t_text = time.time() - t0
-        mouth.wait()
+        yielded = mouth.wait_yielding(listener)         # режим диалога: перебили — замолкаем, не говорим поверх
     finally:
+        mouth.stopped.clear()
         listener.paused.clear()
+    if yielded:
+        _log("система", "замолчала — собеседник заговорил, слушаю его")
     # служебные метки: злость, кто говорил, факты о людях
     m = WHO_RE.search(raw)
     if m and m.group(1).strip().lower() not in ("кто-то", "неизвестно", "?"):
