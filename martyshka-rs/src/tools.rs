@@ -548,8 +548,11 @@ pub async fn run_tool(name: &str, args: &Value) -> ToolOutput {
             match client.get(url).send().await {
                 Ok(r) => {
                     let html = r.text().await.unwrap_or_default();
-                    let tag_rx = Regex::new(r"(?s)<(script|style)[^>]*>.*?</\1>|<[^>]+>").unwrap();
-                    let clean = tag_rx.replace_all(&html, " ").split_whitespace().collect::<Vec<_>>().join(" ");
+                    // в regex для Rust нет обратных ссылок (\1) — script и style вырезаем по отдельности
+                    let code_rx = Regex::new(r"(?is)<script\b[^>]*>.*?</script>|<style\b[^>]*>.*?</style>").unwrap();
+                    let tag_rx = Regex::new(r"<[^>]+>").unwrap();
+                    let no_code = code_rx.replace_all(&html, " ");
+                    let clean = tag_rx.replace_all(&no_code, " ").split_whitespace().collect::<Vec<_>>().join(" ");
                     ToolOutput::ok(clean.chars().take(MAX_OUT).collect::<String>())
                 }
                 Err(e) => ToolOutput::err(format!("Не открылось: {e}")),
