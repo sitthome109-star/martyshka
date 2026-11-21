@@ -121,7 +121,7 @@ def self_knowledge() -> str:
     как шар голосовой Мартышки — из точек)
   · шар голосовой Мартышки на экране: {p / 'martyshka' / 'face.py'}
   · своя иконка: {s / 'studio.ico'} (если файла нет — берётся {p / 'martyshka' / 'martyshka.ico'})
-  · запускалка: {p / 'Мартышка Студия.exe'}, ярлык: Рабочий стол\\Мартышка.lnk
+  · запускалка: {p / 'Мартышка.exe'}, ярлык: Рабочий стол\\Мартышка.lnk
   · мозги (DeepSeek): {s / 'brains.py'} и {p / 'martyshka' / 'deepseek.py'}; голос (Fish Audio):
     {p / 'martyshka' / 'fish.py'}; память: {p / 'martyshka' / 'longmem.py'}
   · инструменты: {s / 'tools.py'}, агент: {s / 'agent_loop.py'}, окно: {s / 'app.py'}
@@ -160,7 +160,8 @@ def system_prompt(kind: str, brain_label: str, project: str) -> str:
    о каком файле/проекте речь — посмотри (list_files, find_files, windows, screen_look). Переспрашивай ТОЛЬКО если
    угадать правда невозможно; если есть разумный вариант — делай его и скажи, что выбрала. Несколько пунктов в
    просьбе — сделай ВСЕ по очереди (план!).
-2. Задача из 3+ шагов — сразу plan, по ходу отмечай in_progress → done.
+2. Задача из 3+ шагов — сразу plan. Закончил пункт — СРАЗУ снова вызови plan с обновлёнными статусами
+   (готовый → done, следующий → in_progress): брат видит галочки. Можно коротко: plan(done=[номера готовых]).
 3. Перед каждым инструментом — одна короткая фраза: что делаешь и зачем (брат видит её, в том числе в окне разрешения).
 4. Факты, цены, версии, документацию и тексты ошибок — ищи (web_search/web_fetch). Не выдумывай.
 5. Код — качественный, целиком, без заглушек. После написания ОБЯЗАТЕЛЬНО запусти и проверь; ошибка — прочитай её,
@@ -192,6 +193,7 @@ class Chat:
         self.created = time.time()
         self.project = ""                  # над каким проектом идёт работа в этом чате
         self.restart_requested = False     # агент поменял саму Студию — перезапуститься после ответа
+        self.plan: list[dict] = []         # план текущей задачи (галочки)
         self.history: list[dict] = []      # для мозга
         self.display: list[dict] = []      # для окна
         if chat_id:
@@ -286,6 +288,7 @@ class Chat:
 
         self.history.append({"role": "user", "text": text})
         self.display.append({"type": "user", "text": text})
+        self.plan = []
         lang = language_of(text)
         system = system_prompt(kind, brain.label, self.project) + (
             "" if lang == "русский" else f"\n\nВАЖНО: брат написал на языке «{lang}». Весь ответ — на этом языке.")
@@ -293,7 +296,8 @@ class Chat:
         # разрешения на эту задачу
         allowed_scopes: set[str] = set()
         allow_all = {"on": False}
-        repeats: dict[str, int] = {}
+        repeats: dict[str, tuple[int, float]] = {}
+        stuck = {"n": 0}
         vision_ctx = {"vision_model": "", "vision_ctx": 0}
 
         def permit(name: str, args: dict, reason: str) -> bool:
@@ -340,17 +344,31 @@ class Chat:
                                              "content": "Не выполнено.", "is_error": True})
                     break
                 if not res.tool_calls:
+                    self._finish_plan(emit)        # ответ без новых шагов — задача сделана, всё с галочкой
                     break
                 for call in res.tool_calls:
                     sig = call["name"] + json.dumps(call["args"], sort_keys=True, ensure_ascii=False)
-                    repeats[sig] = repeats.get(sig, 0) + 1
+                    n, last = repeats.get(sig, (0, 0.0))
+                    if time.time() - last > 30:        # та же проверка через полминуты — это ожидание, не петля
+                        n = 0
+                    repeats[sig] = (n + 1, time.time())
+                    if n + 1 >= 3:
+                        stuck["n"] += 1
                     self._do_tool(call, emit, should_stop, permit, ask_action, vision_ctx,
-                                  res.text.strip().split("\n")[-1][:300], repeats[sig])
+                                  res.text.strip().split("\n")[-1][:300], n + 1)
+                if stuck["n"] >= 3:                    # трижды упёрлась в одно и то же — не крутимся до предела шагов
+                    note = ("Я застряла: несколько раз повторяю одно и то же действие. Остановилась, чтобы не "
+                            "крутиться впустую. Подскажи, что делать дальше, или напиши «продолжай» — попробую иначе.")
+                    emit({"type": "error", "text": note})
+                    self.display.append({"type": "error", "text": note})
+                    break
             else:
                 note = "Достигнут предел шагов. Напиши «продолжай» — доделаю."
                 emit({"type": "error", "text": note})
                 self.display.append({"type": "error", "text": note})
         finally:
+            if self.plan:                          # в истории чата — последнее состояние плана
+                self.display.append({"type": "plan", "items": self.plan})
             self.save()
             try:                                   # в общую долгую память: что брат просил и что ответила
                 from .. import longmem
@@ -360,6 +378,52 @@ class Chat:
             except Exception:
                 pass
             emit({"type": "done"})
+
+    # ---------- план с галочками ----------
+    STATUS = {"done": "done", "completed": "done", "complete": "done", "finished": "done", "готово": "done",
+              "in_progress": "in_progress", "in-progress": "in_progress", "doing": "in_progress", "active": "in_progress",
+              "current": "in_progress", "pending": "pending", "todo": "pending", "waiting": "pending"}
+
+    def _set_plan(self, args: dict, emit) -> None:
+        """План от мозга: принимает и полный список, и коротко «done=[1,2]». Неизвестные поля — переводит."""
+        items = args.get("items") or args.get("steps") or []
+        if items:
+            plan = []
+            for it in items:
+                if isinstance(it, str):
+                    it = {"step": it}
+                step = it.get("step") or it.get("title") or it.get("text") or it.get("content") or "…"
+                plan.append({"step": str(step), "status": self.STATUS.get(str(it.get("status", "pending")).lower(),
+                                                                         "pending")})
+            self.plan = plan
+        for i in args.get("done") or []:
+            if isinstance(i, int) and 1 <= i <= len(self.plan):
+                self.plan[i - 1]["status"] = "done"
+        self._fix_plan()
+        emit({"type": "plan", "items": self.plan})
+
+    def _fix_plan(self) -> None:
+        """Ровно один пункт «в работе»: всё до него — готово (мозг часто забывает отметить)."""
+        if not self.plan:
+            return
+        cur = next((i for i, x in enumerate(self.plan) if x["status"] == "in_progress"), None)
+        if cur is None:
+            cur = next((i for i, x in enumerate(self.plan) if x["status"] != "done"), None)
+            if cur is not None:
+                self.plan[cur]["status"] = "in_progress"
+        if cur is not None:
+            for x in self.plan[:cur]:
+                x["status"] = "done"
+            for x in self.plan[cur + 1:]:
+                if x["status"] == "in_progress":
+                    x["status"] = "pending"
+
+    def _finish_plan(self, emit) -> None:
+        """Задача закончена нормально — все пункты с галочкой."""
+        if self.plan and any(x["status"] != "done" for x in self.plan):
+            for x in self.plan:
+                x["status"] = "done"
+            emit({"type": "plan", "items": self.plan})
 
     def _do_tool(self, call: dict, emit, should_stop, permit, ask_action, vision_ctx: dict, reason: str,
                  repeat: int) -> None:
@@ -374,9 +438,10 @@ class Chat:
             out = {"text": "Ты уже трижды сделал ровно это же. Остановись и попробуй ДРУГОЙ способ "
                            "(или спроси брата).", "ok": False}
         elif name == "plan":
-            emit({"type": "plan", "items": args.get("items", [])})
-            self.display.append({"type": "plan", "items": args.get("items", [])})
-            out = {"text": "План показан брату.", "ok": True}
+            self._set_plan(args, emit)
+            left = [x["step"] for x in self.plan if x["status"] != "done"]
+            out = {"text": "План обновлён. " + (f"Осталось: {'; '.join(left)}." if left else "Всё отмечено."),
+                   "ok": True}
         else:
             emit({"type": "activity", "kind": kind, "text": lbl})
             emit({"type": "tool_start", "id": call["id"], "label": lbl, "name": name, "kind": kind})

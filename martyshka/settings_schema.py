@@ -96,7 +96,11 @@ def schema(extra: dict | None = None) -> dict:
                                                 "распознаёт DeepSeek.",
          "fields": [
              _f("MIC_DEVICE", "Микрофон", "select", "", options=_devices("in")),
-             _f("FOLLOWUP_SECONDS", "Сколько ждать продолжения без имени (сек)", "slider", "", min=0, max=20, step=1),
+             _f("DIALOG_MODE", "Режим диалога", "toggle",
+                "Откликается только на имя «Мартышка» и не перебивает: дослушивает до конца, ждёт паузу."),
+             _f("DIALOG_SILENCE", "Пауза «договорил» в режиме диалога (сек)", "slider", "", min=0.8, max=4, step=0.1),
+             _f("FOLLOWUP_SECONDS", "Без режима диалога: сколько ждать продолжения без имени (сек)", "slider", "",
+                min=0, max=20, step=1),
              _f("END_OF_SPEECH_SILENCE", "Пауза «я договорил» (сек)", "slider", "", min=0.4, max=2.0, step=0.1),
              _f("SPEECH_THRESHOLD", "Чувствительность к речи", "slider",
                 "Меньше — слышит тише, больше — меньше реагирует на шум.", min=0.2, max=0.9, step=0.05),
@@ -143,7 +147,7 @@ def schema(extra: dict | None = None) -> dict:
 
 
 NUMERIC = {"TEMPERATURE": float, "VOICE_SPEED": float, "VOICE_TEMPERATURE": float, "VOICE_VOLUME": float,
-           "FOLLOWUP_SECONDS": float, "END_OF_SPEECH_SILENCE": float, "SPEECH_THRESHOLD": float,
+           "FOLLOWUP_SECONDS": float, "DIALOG_SILENCE": float, "END_OF_SPEECH_SILENCE": float, "SPEECH_THRESHOLD": float,
            "STUDIO_MAX_STEPS": int, "FACE_SIZE": int}
 
 

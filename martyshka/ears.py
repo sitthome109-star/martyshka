@@ -160,7 +160,9 @@ class Ears:
         threading.Thread(target=self._loop, daemon=True, name="ears").start()
 
     def expect_followup(self, seconds: float | None = None) -> None:
-        """После ответа: слушать продолжение без имени."""
+        """После ответа: слушать продолжение без имени (в режиме диалога — нет: только по имени)."""
+        if config.DIALOG_MODE:
+            return
         with self._lock:
             if self._mode == "wake":
                 self._begin_followup(seconds or config.FOLLOWUP_SECONDS)
@@ -237,7 +239,7 @@ class Ears:
         self._capture = list(self._preroll)[-preroll_blocks:]
         self._heard_speech = why == "wake"  # имя уже прозвучало — значит, речь была
         self._silence = 0.0
-        self._deadline = time.time() + config.MAX_UTTERANCE_SECONDS
+        self._deadline = time.time() + (config.DIALOG_MAX_SECONDS if config.DIALOG_MODE else config.MAX_UTTERANCE_SECONDS)
 
     def _finish_capture(self) -> None:
         audio = np.concatenate(self._capture) if self._capture else np.zeros(0, np.float32)
@@ -286,6 +288,8 @@ class Ears:
                         self._silence = 0.0
                     else:
                         self._silence += BLOCK / SR
-                    if (self._heard_speech and self._silence >= config.END_OF_SPEECH_SILENCE) \
+                    pause = max(config.END_OF_SPEECH_SILENCE, config.DIALOG_SILENCE) if config.DIALOG_MODE \
+                        else config.END_OF_SPEECH_SILENCE          # режим диалога: дослушать до конца, не перебивать
+                    if (self._heard_speech and self._silence >= pause) \
                             or time.time() > self._deadline:
                         self._finish_capture()

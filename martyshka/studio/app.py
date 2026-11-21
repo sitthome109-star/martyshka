@@ -1,7 +1,8 @@
 """
-ОКНО ЧАТА МАРТЫШКИ: pywebview (встроенный в Windows браузер Edge WebView2) + мост окно ↔ агент.
+ОКНО МАРТЫШКИ — главное приложение: pywebview (Edge WebView2) + мост окно ↔ агент.
 
-  - Открывается кликом по шару голосовой Мартышки (или ярлыком «Мартышка» / «Мартышка Студия.exe»).
+  - Запускается первым (ярлык «Мартышка» → «Мартышка.exe»). Голосового помощника включают и выключают
+    кнопкой «Говорить» — он работает отдельным процессом рядом, со своим шаром (клик по шару — это окно).
   - Отдельного шарика у окна больше нет: шар — один, голосовой Мартышки. Крестик прячет окно, шар его возвращает.
   - Наверху окна: режим мозга (Авто / Flash / Pro), Голос, Говорилка, Память, Настройки — всё в одном месте.
   - Одна копия: повторный запуск просто показывает уже открытое окно (флажок data/studio/показать.flag).
@@ -43,6 +44,8 @@ class Api:
         self._tab = tab
         self._chat = agent_loop.Chat()
         self._preview_lock = threading.Lock()
+        self._dictate_stop = threading.Event()
+        self._speaker = None
         threading.Thread(target=self._pump, daemon=True).start()
 
     def attach(self, window) -> None:
@@ -133,6 +136,7 @@ class Api:
             pass
         color = face.get("color") or config.FACE_COLOR
         return {"chats": agent_loop.Chat.list_all(), "name": config.NAME, "ready": deepseek.ready(),
+                "chat_speak": bool(getattr(config, "CHAT_SPEAK", False)), "volume": float(config.VOICE_VOLUME),
                 "brain_mode": (config.BRAIN_MODE or "auto").replace("deepseek-v4-", "").replace("deepseek-", ""),
                 "color": config.FACE_COLORS.get(color, color), "tab": self._tab, **self.status_dots()}
 
@@ -153,6 +157,92 @@ class Api:
         from .. import settings_schema
         settings_schema.save({"BRAIN_MODE": mode if mode in ("auto", "flash", "pro") else "auto"})
         return {"ok": True}
+
+    def voice_set(self, on: bool) -> dict:
+        """Кнопка «Говорить»: включить или выключить голосового помощника (и запомнить выбор)."""
+        from .. import settings_schema, system
+        settings_schema.save({"VOICE_AUTOSTART": bool(on)})
+        if on and not system.voice_running():
+            system.start_voice()
+            for _ in range(20):                       # мьютекс появляется через пару секунд после запуска
+                time.sleep(0.5)
+                if system.voice_running():
+                    break
+        elif not on and system.voice_running():
+            system.stop_voice()
+            for _ in range(20):
+                time.sleep(0.5)
+                if not system.voice_running():
+                    break
+        return {"voice": system.voice_running()}
+
+    # ---------- голос в самом окне: микрофон, чтение вслух ----------
+    def dictate(self) -> dict:
+        """Кнопка 🎤: записать фразу с микрофона до паузы и распознать (DeepSeek)."""
+        import numpy as np
+        import sounddevice as sd
+        from .. import deepseek
+        from faster_whisper.vad import get_vad_model
+        self._dictate_stop.clear()
+        sr, block = 16000, 1600
+        vad = get_vad_model()
+        audio, window, heard, silent, t0 = [], [], False, 0.0, time.time()
+        try:
+            with sd.InputStream(samplerate=sr, channels=1, dtype="float32", blocksize=block,
+                                device=config.MIC_DEVICE or None) as stream:
+                while not self._dictate_stop.is_set() and time.time() - t0 < 60:
+                    b = stream.read(block)[0][:, 0].copy()
+                    audio.append(b)
+                    window = (window + [b])[-5:]
+                    w = np.concatenate(window)
+                    n = (len(w) // 512) * 512
+                    speech = bool(n) and float(vad(w[-n:]).reshape(-1)[-3:].mean()) > config.SPEECH_THRESHOLD
+                    if speech:
+                        heard, silent = True, 0.0
+                    elif heard:
+                        silent += block / sr
+                    if heard and silent >= max(1.2, float(config.DIALOG_SILENCE)):
+                        break
+                    if not heard and time.time() - t0 > 8:
+                        return {"text": "", "error": "Не услышала речь — проверь микрофон в «Голос»."}
+        except Exception as e:
+            return {"text": "", "error": f"Микрофон не открылся: {e}"}
+        if not heard:
+            return {"text": ""}
+        try:
+            return {"text": deepseek.transcribe(np.concatenate(audio), sr)}
+        except Exception as e:
+            return {"text": "", "error": str(e)}
+
+    def dictate_stop(self) -> None:
+        self._dictate_stop.set()
+
+    def speak(self, text: str) -> dict:
+        """Прочитать ответ вслух (кнопка 🔊 в окне). Длинное — только начало."""
+        from ..voice import Voice
+        text = (text or "").strip()
+        if not text:
+            return {"ok": False}
+        if len(text) > 900:
+            text = text[:900].rsplit(".", 1)[0] + "."
+        if self._speaker is None:
+            self._speaker = Voice()
+        self._speaker.stop()
+        self._speaker.say(text)
+        return {"ok": True}
+
+    def stop_speak(self) -> None:
+        if self._speaker is not None:
+            self._speaker.stop()
+
+    def pick_file(self) -> dict:
+        """Кнопка 📎: выбрать файл — путь вставится в сообщение, агент его прочитает."""
+        import webview
+        try:
+            r = self._window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False)
+        except Exception:
+            r = None
+        return {"path": r[0] if r else ""}
 
     def toggle_voice(self) -> dict:
         """Кнопка «Голос» — настоящий выключатель: работает — выключаем, не работает — включаем."""
@@ -424,14 +514,17 @@ def main() -> None:
         SHOW_FLAG.parent.mkdir(parents=True, exist_ok=True)
         SHOW_FLAG.write_text(tab, encoding="utf-8")
         sys.exit(0)
-    # Голосовая Мартышка (шар, микрофон) больше НЕ включается сама вместе с чатом:
-    # брат включает и выключает её вручную кнопкой «Голос» наверху окна.
+    # Голосовой помощник — отдельный процесс, который брат включает и выключает кнопкой «Говорить».
+    # Выбор запоминается (VOICE_AUTOSTART): был включён — включится сам при следующем запуске.
     from .. import system
-    if "--voice" in sys.argv and not system.voice_running():
+    want_voice = "--voice" in sys.argv or (getattr(config, "VOICE_AUTOSTART", False) and "--no-voice" not in sys.argv)
+    if want_voice and not system.voice_running():
         try:
             system.start_voice()
         except Exception:
             pass
+    # при включении ПК (--autostart) с включённым голосом — окно не показываем: шар на экране, клик — окно
+    hidden = "--autostart" in sys.argv and want_voice
     import webview
     setup_helpers()
 
@@ -458,8 +551,8 @@ def main() -> None:
     SHOW_FLAG.unlink(missing_ok=True)
 
     api = Api(tab)
-    window = webview.create_window(config.NAME, str(UI), js_api=api, width=1320, height=880,
-                                   min_size=(760, 560), background_color="#07080c")
+    window = webview.create_window(config.NAME, str(UI), js_api=api, width=1180, height=860,
+                                   min_size=(760, 560), background_color="#0c0c0f", hidden=hidden)
     api.attach(window)
     window.events.closing += api.on_closing
 

@@ -1,4 +1,4 @@
-// Запускалка «Мартышка Студия.exe»: тихо запускает studio.py через Python проекта (без чёрного окна).
+// Запускалка «Мартышка.exe»: тихо запускает studio.py через Python проекта (без чёрного окна) и передаёт ключи (--autostart).
 // Собирается командой: .venv\Scripts\python.exe -m martyshka.studio.build_exe
 using System;
 using System.Diagnostics;
@@ -8,7 +8,7 @@ using System.Windows.Forms;
 static class Launcher
 {
     [STAThread]
-    static void Main()
+    static void Main(string[] argv)
     {
         string dir = AppDomain.CurrentDomain.BaseDirectory;
         string py = Path.Combine(dir, ".venv", "Scripts", "pythonw.exe");
@@ -16,10 +16,11 @@ static class Launcher
         if (!File.Exists(py) || !File.Exists(script))
         {
             MessageBox.Show("Не нашла Python или studio.py рядом с этим файлом.\nПапка: " + dir,
-                            "Мартышка Студия", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            "Мартышка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
-        var psi = new ProcessStartInfo(py, "\"" + script + "\"");
+        string extra = argv.Length > 0 ? " " + string.Join(" ", argv) : "";
+        var psi = new ProcessStartInfo(py, "\"" + script + "\"" + extra);
         psi.WorkingDirectory = dir;
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;

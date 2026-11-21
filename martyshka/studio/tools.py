@@ -69,11 +69,13 @@ GROUPS = {
 
 TOOLS = [
     {"name": "plan", "group": "",
-     "description": "Показать брату план задачи списком шагов и отмечать прогресс. Вызывай в начале задачи из 3+ "
-                    "шагов и обновляй по ходу. status: pending | in_progress | done.",
-     "input_schema": _schema({"items": {"type": "array", "items": _schema(
-         {"step": S, "status": {"type": "string", "enum": ["pending", "in_progress", "done"]}},
-         ["step", "status"])}}, ["items"])},
+     "description": "План задачи с галочками. В начале задачи из 3+ шагов — items (весь список). Закончил пункт — "
+                    "сразу вызови снова: либо items с новыми статусами, либо коротко done=[номера готовых пунктов, "
+                    "с 1]. status: pending | in_progress | done.",
+     "input_schema": {"type": "object", "properties": {
+         "items": {"type": "array", "items": _schema(
+             {"step": S, "status": {"type": "string", "enum": ["pending", "in_progress", "done"]}}, ["step", "status"])},
+         "done": {"type": "array", "items": I}}, "required": [], "additionalProperties": False}},
     {"name": "web_search", "group": "web",
      "description": "Поиск в интернете. Возвращает заголовки, ссылки и выдержки. Используй для фактов, новостей, "
                     "цен, документации библиотек и ошибок программ — НЕ выдумывай.",
@@ -171,7 +173,7 @@ TOOLS = [
                     "run_python + Pillow: простой крупный силуэт, контрастный фон), потом make_icon.",
      "input_schema": _schema({"image": S, "out": S}, ["image", "out"])},
     {"name": "update_app", "group": "files",
-     "description": "Применить изменения в САМОЙ Студии: пересобрать «Мартышка Студия.exe» (с иконкой "
+     "description": "Применить изменения в САМОЙ Студии: пересобрать «Мартышка.exe» (с иконкой "
                     "martyshka/studio/studio.ico, если она есть), обновить ярлык на рабочем столе и перезапустить "
                     "Студию ПОСЛЕ ответа брату. Вызывай последним шагом, когда правила свои файлы.",
      "input_schema": _schema({"restart": {"type": "boolean"}}, ["restart"])},
@@ -281,7 +283,7 @@ def _foreground_app() -> str:
 def permission(name: str, args: dict) -> dict | None:
     """Нужно ли спросить брата. Возвращает {question, scope, scope_label} или None."""
     if name == "update_app":
-        return {"question": "Пересобрать «Мартышка Студия.exe», обновить ярлык на рабочем столе"
+        return {"question": "Пересобрать «Мартышка.exe», обновить ярлык на рабочем столе"
                             + (" и перезапустить Студию" if args.get("restart") else ""),
                 "scope": "app:studio", "scope_label": "все изменения самой Студии"}
     if name in ("write_file", "edit_file", "make_icon"):
@@ -468,10 +470,10 @@ def _run(name: str, args: dict, ctx: dict) -> dict:
     if name == "update_app":
         from . import build_exe
         exe = build_exe.build()
-        lnk = Path(os.path.expandvars(r"%USERPROFILE%")) / "Desktop" / "Мартышка Студия.lnk"
+        lnk = Path(os.path.expandvars(r"%USERPROFILE%")) / "Desktop" / "Мартышка.lnk"
         icon = build_exe.icon_path()
         ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:L);$s.TargetPath=$env:T;"
-              "$s.WorkingDirectory=$env:D;$s.IconLocation=$env:I;$s.Description='Мартышка Студия';$s.Save()")
+              "$s.WorkingDirectory=$env:D;$s.IconLocation=$env:I;$s.Description='Мартышка';$s.Save()")
         subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, creationflags=0x08000000,
                        env=dict(os.environ, L=str(lnk), T=str(exe), D=str(config.PROJECT_DIR), I=str(icon)))
         # Windows запоминает старые значки — просим обновить

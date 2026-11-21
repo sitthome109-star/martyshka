@@ -105,6 +105,7 @@ def voice_running() -> bool:
 
 def start_voice() -> None:
     """Запустить голосовую Мартышку (без окна). Сама следит, чтобы копия была одна."""
+    (config.DATA_DIR / "выключить.flag").unlink(missing_ok=True)   # старый флажок «выключить» не должен её сразу закрыть
     subprocess.Popen([str(PYTHONW), str(MAIN_SCRIPT)], cwd=str(config.PROJECT_DIR), creationflags=0x08000000)
 
 
@@ -204,11 +205,12 @@ def _special_folder(name: str) -> Path:
     return Path(r.stdout.decode("utf-8").strip())
 
 
-STUDIO_EXE = config.PROJECT_DIR / "Мартышка Студия.exe"
+# Одно приложение: «Мартышка.exe» открывает окно, голосовой помощник включается кнопкой «Говорить» в нём
+STUDIO_EXE = config.PROJECT_DIR / "Мартышка.exe"
 STUDIO_SCRIPT = config.PROJECT_DIR / "studio.py"
-STUDIO_SHORTCUT_NAME = "Мартышка Студия.lnk"
+STUDIO_SHORTCUT_NAME = "Мартышка.lnk"
 STUDIO_ICON = config.PROJECT_DIR / "martyshka" / "studio" / "studio.ico"
-STARTUP_VOICE_NAME = "Мартышка.lnk"          # старый ярлык: он поднимал голосовую Мартышку — больше не нужен
+OLD_SHORTCUTS = ("Мартышка Студия.lnk",)    # старые ярлыки отдельного чата
 
 
 def startup_shortcut() -> Path:
@@ -219,15 +221,15 @@ def autostart_enabled() -> bool:
     return startup_shortcut().exists()
 
 
-def _make_chat_shortcut(path: Path) -> bool:
-    """Ярлык на ЧАТ (Студию), а не на голосовую Мартышку."""
+def _make_chat_shortcut(path: Path, extra: str = "") -> bool:
+    """Ярлык на приложение Мартышки (окно; голос — кнопкой в нём)."""
     exe = STUDIO_EXE if STUDIO_EXE.exists() else PYTHONW
-    args = "" if STUDIO_EXE.exists() else f'"{STUDIO_SCRIPT}"'
+    args = (extra if STUDIO_EXE.exists() else f'"{STUDIO_SCRIPT}" {extra}').strip()
     icon = STUDIO_ICON if STUDIO_ICON.exists() else ICON_FILE
     ps = (
         "$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:MT_LNK);"
         "$s.TargetPath=$env:MT_TARGET;$s.Arguments=$env:MT_ARGS;$s.WorkingDirectory=$env:MT_DIR;"
-        "$s.IconLocation=$env:MT_ICON;$s.Description='Мартышка — чат';$s.Save()"
+        "$s.IconLocation=$env:MT_ICON;$s.Description='Мартышка';$s.Save()"
     )
     env = dict(os.environ, MT_LNK=str(path), MT_TARGET=str(exe), MT_ARGS=args,
                MT_DIR=str(config.PROJECT_DIR), MT_ICON=str(icon))
@@ -243,17 +245,18 @@ def set_autostart(on: bool) -> bool:
     кнопка «Голос» в окне чата. Старый ярлык голоса убираем.
     """
     lnk = startup_shortcut()
-    old_voice = _special_folder("Startup") / STARTUP_VOICE_NAME
-    old_voice.unlink(missing_ok=True)
+    for old in OLD_SHORTCUTS:
+        (_special_folder("Startup") / old).unlink(missing_ok=True)
     if on:
-        return _make_chat_shortcut(lnk)
+        return _make_chat_shortcut(lnk, "--autostart")
     lnk.unlink(missing_ok=True)
     return True
 
 
 def make_desktop_shortcut() -> Path | None:
-    lnk = _special_folder("Desktop") / SHORTCUT_NAME
-    return lnk if _make_shortcut(lnk) else None
+    """Один ярлык «Мартышка» на рабочем столе — на приложение (окно), а не на голос отдельно."""
+    lnk = _special_folder("Desktop") / STUDIO_SHORTCUT_NAME
+    return lnk if _make_chat_shortcut(lnk) else None
 
 
 # ---------- иконка ----------

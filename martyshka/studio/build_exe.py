@@ -1,4 +1,4 @@
-"""Собрать «Мартышка Студия.exe» в папке проекта (компилятор C# из .NET Framework, он есть в каждой Windows)."""
+"""Собрать «Мартышка.exe» в папке проекта (компилятор C# из .NET Framework, он есть в каждой Windows)."""
 import subprocess
 from pathlib import Path
 
@@ -8,14 +8,14 @@ CSC = Path(r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe")
 
 
 def icon_path() -> Path:
-    """Своя иконка Студии (studio.ico), если её сделали; иначе общая иконка Мартышки."""
+    """Иконка приложения — шар Мартышки (studio.ico); если нет — общая иконка."""
     own = Path(__file__).parent / "studio.ico"
     return own if own.exists() else config.PROJECT_DIR / "martyshka" / "martyshka.ico"
 
 
 def build() -> Path:
     src = Path(__file__).parent / "launcher.cs"
-    out = config.PROJECT_DIR / "Мартышка Студия.exe"
+    out = config.PROJECT_DIR / "Мартышка.exe"
     icon = icon_path()
     args = [str(CSC), "/nologo", "/target:winexe", "/platform:anycpu", "/optimize+", f"/out:{out}",
             "/r:System.Windows.Forms.dll"]
