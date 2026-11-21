@@ -1713,19 +1713,26 @@ def main() -> None:
                         for n in now_set - roster:
                             joined[n] = time.time()
                         roster = now_set
+                        for n in came:
+                            greeted[n] = time.time()
+                        # на кого зла (≥2) — молчит: злость не повод самой цеплять человека при входе/выходе
+                        from . import longmem
+                        skip = [n for n in came + gone if n not in _greet_targets([n], longmem.anger)]
+                        if skip:
+                            _log("система", f"вход/выход {', '.join(skip)} — зла на него(неё), молчу")
+                        came = _greet_targets(came, longmem.anger)
+                        gone = _greet_targets(gone, longmem.anger)
                         if came:
-                            for n in came:
-                                greeted[n] = time.time()
                             who_c = ", ".join(came)
-                            _speak_own(f"(в войс только что зашёл {who_c}. Поздоровайся по имени — коротко и "
-                                       "по-своему, можешь вспомнить что-то о нём или спросить про то, что он любит; "
-                                       "если ты на него зла — это слышно)", mouth, listener, st, who=came[0],
+                            _speak_own(f"(в войс только что зашёл {who_c}. Поздоровайся по имени — коротко, "
+                                       "по-доброму и нейтрально, без подколов; можешь спросить про то, что он любит. "
+                                       "Если сказать нечего — ответь [МОЛЧУ])", mouth, listener, st, who=came[0],
                                        tag=f"привет: {who_c}")
                             continue
                         if gone:
                             who_g = ", ".join(gone)
-                            _speak_own(f"(из войса только что вышел {who_g}. Попрощайся коротко — или скажи "
-                                       "остальным что-нибудь о нём по-дружески)", mouth, listener, st,
+                            _speak_own(f"(из войса только что вышел {who_g}. Попрощайся коротко и нейтрально, без "
+                                       "подколов и без «ну и вали» — или ответь [МОЛЧУ])", mouth, listener, st,
                                        who=gone[0], tag=f"пока: {who_g}")
                             continue
                 # кнопка в окне: брат велел начать разговор с Морни прямо сейчас (в любом режиме)
@@ -1892,6 +1899,15 @@ def _predict(text: str, speaker: str, st: dict) -> list[dict] | None:
     return build_msgs(hist, longmem.anger(who), with_morni, who, st["present"])
 
 
+GREET_ANGER_MAX = 1      # на кого злость выше — при входе/выходе молчит (не подкалывает, пока к ней не обратятся)
+
+
+def _greet_targets(names: list[str], anger_of) -> list[str]:
+    """С кем здороваться/прощаться самой: только с теми, на кого она почти не зла.
+    Злость — для ответа на обиду, а не повод самой нападать на человека, когда он просто зашёл или вышел."""
+    return [n for n in names if anger_of(n) <= GREET_ANGER_MAX]
+
+
 def _speak_own(instruction: str, mouth, listener, st, who: str = "", tag: str = "") -> str:
     """Мартышка говорит сама, без вопроса: поздороваться, попрощаться, заговорить, когда тихо.
     Она может и промолчать — ответить [МОЛЧУ]. Возвращает сказанное."""
@@ -1911,10 +1927,11 @@ def _speak_own(instruction: str, mouth, listener, st, who: str = "", tag: str = 
         cut = sw.finish() or locals().get("cut", False)
         mouth.stopped.clear()
         listener.paused.clear()
-    _apply_tone(raw, who, "", mouth.anger)
+    # сама заговорила (привет/пока/тишина) — её никто не задел, злость от собственной реплики не растёт
+    _apply_tone(raw, who, "", mouth.anger, rated=True)
     _take_tags(raw, who)
     answer = _clean(raw)
-    if cut and answer:                                  # остановили посреди — недосказанное не в историю
+    if cut and answer:                                # остановили посреди — недосказанное не в историю
         history.append({"role": "assistant", "content": INTERRUPTED_MARK})
         _log("система", f"{tag or 'сама'}: перебили — замолчала")
         st["last_reply_at"], st["chain"] = time.time(), 0
@@ -1956,18 +1973,30 @@ def _apply_tone(raw: str, who: str, heard: str, anger: int, hurt: int = 0, rated
     return new
 
 
-def _rate_offense(text: str, who: str) -> int:
-    """Насколько фраза задевает Мартышку: 0 — нет, 1 — подкол/насмешка, 2 — грубо/унизительно."""
+def _rate_offense(text: str, who: str, behind_back: bool = False) -> int:
+    """Насколько фраза задевает Мартышку: 0 — нет, 1 — подкол/насмешка, 2 — грубо/унизительно.
+    behind_back — сказано не ей, а о ней (другим людям или Морни)."""
     from . import deepseek
+    where = ("Сказано НЕ Мартышке, а другим людям (или ИИ Морни) — о ней или с упоминанием её имени. "
+             if behind_back else "")
     try:
         raw = deepseek.ask(
-            f"Фраза на голосовом сервере (сказал {who}): «{text}»\nМартышка — ИИ-девушка на этом сервере. "
-            "Это издёвка, унижение, грубая шутка, оскорбление или провокация в адрес Мартышки? Просьбы и команды "
-            "(спой, расскажи, сделай, ответь, замолчи) — это НЕ обида, даже если сказаны коротко или с ошибками "
-            "распознавания речи. Ответ JSON: "
-            '{"обида": 0|1|2} (0 — нет, нейтрально или по-доброму; 1 — подкол, насмешка; 2 — грубо, унизительно, '
-            "оскорбление).", model=deepseek.FLASH, max_tokens=30, json_mode=True)
-        return max(0, min(2, int(json.loads(raw).get("обида") or 0)))
+            f"Фраза на голосовом сервере (сказал {who}): «{text}»\nМартышка — ИИ-девушка на этом сервере. {where}"
+            "Это издёвка, унижение, грубая шутка, оскорбление или провокация в адрес Мартышки?\n"
+            "Думай о НАМЕРЕНИИ говорящего, а не о том, упомянута ли она. Обида — только когда над ней смеются, "
+            "унижают, обзывают, говорят про неё гадости или с презрением (что она несёт чушь, бесполезна, "
+            "её надо выключить). НЕ обида (0): просьбы и команды (спой, спой ещё раз, "
+            "расскажи, сделай, ответь, замолчи) — даже повторные, настойчивые, короткие или с ошибками "
+            "распознавания речи; предложение кому-то поговорить с ней; рассказ о ней, новости о ней "
+            "(«ей добавили память»), вопрос о ней, обсуждение её без насмешки, похвала, дружеская шутка. "
+            "Если не уверен — 0. Ответ JSON: "
+            '{"обида": 0|1|2} (0 — нет, нейтрально или по-доброму; 1 — явный подкол, насмешка над ней; '
+            "2 — грубо, унизительно, оскорбление).", model=deepseek.FLASH, max_tokens=30, json_mode=True)
+        data = json.loads(raw)
+        val = data.get("обида")
+        if val is None:                                  # мозг иногда пишет ключ с опечаткой («обина») — берём число
+            val = next((v for v in data.values() if isinstance(v, (int, float, str)) and str(v).isdigit()), 0)
+        return max(0, min(2, int(val or 0)))
     except Exception:
         return 0
 
@@ -1988,15 +2017,15 @@ class _Offense:
 def _rate_offense_bg(text: str, who: str) -> None:
     """Над Мартышкой смеются за спиной («Мартышка просто завидует…») — она не отвечает, но запоминает обиду:
     быстрый мозг оценивает, задевает ли это её, и злость на сказавшего растёт."""
-    if not who or who == SERVER:
+    if not who or who == SERVER or who.lower().startswith(MORNI_NAMES):
         return
 
     def run():
         from . import longmem
-        hurt = _rate_offense(text, who)
+        hurt = _rate_offense(text, who, behind_back=True)
         if hurt > 0:
             cur = longmem.anger(who)
-            new = longmem.set_anger(who, cur + hurt)
+            new = longmem.set_anger(who, cur + 1)        # подслушала — не больше +1 за фразу (лично — сильнее)
             if new != cur:
                 _log("система", f"злость на «{who}»: {cur} → {new} (смеялся(-ась) над ней за спиной)")
     threading.Thread(target=run, daemon=True).start()
@@ -2113,7 +2142,9 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
         _log("система", "просят спеть" + (f" про {about}" if about else ""))
     if not ok:
         longmem.log("говорилка", who, text)
-        if NAME_RE.search(text):                         # говорят о ней, но не ей — обидное запоминает
+        # говорят о ней, но не ей — обидное запоминает. Только если точно знаем, кто сказал (имя с экрана):
+        # догадка «наверное, тот же» уже приписывала брату слова Морни
+        if NAME_RE.search(text) and speaker:
             _rate_offense_bg(text, who)
         if with_morni and st["chain"] >= config.GOVORILKA_MAX_CHAIN * 2:
             st["morni_until"] = 0.0

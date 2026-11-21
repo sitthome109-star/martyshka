@@ -251,6 +251,38 @@ class TestNewStudioAndTelegramFeatures(unittest.TestCase):
         self.assertEqual(w.who(t, t + 1.0), "")
         self.assertEqual(set(w.last_overlap), {"Морни", "Enbulih"})
 
+    def test_govorilka_anger_does_not_attack_or_grow_wrongly(self):
+        from unittest import mock
+        from martyshka import govorilka as g
+        angers = {"Enbulih": 5, "брат": 0, "sitthome": 1, "Вася": 2}
+        # вход/выход: на кого злость ≥2 — молчит, остальным можно поздороваться
+        self.assertEqual(g._greet_targets(["Enbulih", "брат", "sitthome", "Вася"], lambda n: angers.get(n, 0)),
+                         ["брат", "sitthome"])
+        self.assertEqual(g._greet_targets(["Enbulih"], lambda n: angers.get(n, 0)), [])
+
+        store = {"брат": 0}
+        with mock.patch.object(longmem, "set_anger", side_effect=lambda n, v: store.__setitem__(n, v) or v), \
+                mock.patch.object(g, "_log"):
+            # брат снова просит спеть: мозг поставил [ТОН: 3], оценщик сказал «не обида» → злость остаётся 0
+            self.assertEqual(g._apply_tone("{поёт} ля-ля [ТОН: 3]", "брат", "спой ещё раз", 0, 0, rated=True), 0)
+            # своя реплика (привет/пока) с [ТОН: 4] злость не поднимает
+            self.assertEqual(g._apply_tone("Привет [ТОН: 4]", "брат", "", 0, rated=True), 0)
+            # настоящая обида — растёт
+            self.assertEqual(g._apply_tone("Сам дурак [ТОН: 1]", "брат", "ты тупая", 0, 2, rated=True), 2)
+
+        # о ней за спиной: Морни и «неизвестно кто» не оцениваются вовсе
+        with mock.patch.object(g, "_rate_offense") as rate, mock.patch.object(g.threading, "Thread") as th:
+            g._rate_offense_bg("Мартышка тупая", "Морни")
+            g._rate_offense_bg("Мартышка тупая", g.SERVER)
+            th.assert_not_called()
+            rate.assert_not_called()
+
+        # мозг написал ключ с опечаткой — оценка не теряется
+        with mock.patch.object(deepseek, "ask", return_value='{"обина": 2}'):
+            self.assertEqual(g._rate_offense("Мартышка тупая", "Enbulih", True), 2)
+        with mock.patch.object(deepseek, "ask", return_value='{"обида": 0}'):
+            self.assertEqual(g._rate_offense("спой ещё", "брат"), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
