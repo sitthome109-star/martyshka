@@ -77,6 +77,37 @@ fn main() {
 }
 
 #[cfg(windows)]
+fn make_orb_icon() -> Option<tao::window::Icon> {
+    let size = 32usize;
+    let mut rgba = vec![0u8; size * size * 4];
+    let c = (size as f32 - 1.0) / 2.0;
+    let r = c - 0.5;
+    for y in 0..size {
+        for x in 0..size {
+            let dx = (x as f32 - c) / r;
+            let dy = (y as f32 - c) / r;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let idx = (y * size + x) * 4;
+            if dist <= 1.0 {
+                let hx = dx + 0.34;
+                let hy = dy + 0.36;
+                let spec = (1.0 - (hx * hx + hy * hy).sqrt() * 1.15).clamp(0.0, 1.0);
+                let edge = ((1.0 - dist) * 5.0).clamp(0.0, 1.0);
+                let rr = (18.0 + spec * 220.0).min(255.0) as u8;
+                let gg = (165.0 + spec * 90.0).min(255.0) as u8;
+                let bb = 255u8;
+                let aa = (edge * 255.0) as u8;
+                rgba[idx] = rr;
+                rgba[idx + 1] = gg;
+                rgba[idx + 2] = bb;
+                rgba[idx + 3] = aa;
+            }
+        }
+    }
+    tao::window::Icon::from_rgba(rgba, size as u32, size as u32).ok()
+}
+
+#[cfg(windows)]
 fn run_desktop_ui() {
     use base64::Engine;
     use tao::dpi::LogicalSize;
@@ -94,12 +125,14 @@ fn run_desktop_ui() {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
-    let window = WindowBuilder::new()
-        .with_title("Мартышка (Rust)")
-        .with_inner_size(LogicalSize::new(1120.0, 780.0))
-        .with_min_inner_size(LogicalSize::new(720.0, 520.0))
-        .build(&event_loop)
-        .expect("window");
+    let mut wb = WindowBuilder::new()
+        .with_title("Мартышка")
+        .with_inner_size(LogicalSize::new(1160.0, 800.0))
+        .with_min_inner_size(LogicalSize::new(720.0, 520.0));
+    if let Some(icon) = make_orb_icon() {
+        wb = wb.with_window_icon(Some(icon));
+    }
+    let window = wb.build(&event_loop).expect("window");
 
     let ui_path = config::project_dir().join("martyshka").join("studio").join("ui").join("index.html");
     let html = std::fs::read_to_string(&ui_path).unwrap_or_else(|_| EMBEDDED_UI.to_string());
@@ -136,7 +169,6 @@ fn run_desktop_ui() {
         stop: Arc<AtomicBool>,
         speak_stop: Arc<AtomicBool>,
         dictate_stop: Arc<AtomicBool>,
-        gov_stop: Arc<AtomicBool>,
     }
 
     let init_id = agent::new_chat_id();
@@ -147,7 +179,6 @@ fn run_desktop_ui() {
         stop: Arc::new(AtomicBool::new(false)),
         speak_stop: Arc::new(AtomicBool::new(false)),
         dictate_stop: Arc::new(AtomicBool::new(false)),
-        gov_stop: Arc::new(AtomicBool::new(true)),
     }));
 
     let rt_ipc = rt.clone();
@@ -180,10 +211,38 @@ fn run_desktop_ui() {
                             "theme": s.ui_theme,
                             "tab": "chat",
                             "voice": false,
-                            "gov": govorilka_ws::is_running()
+                            "gov": govorilka_ws::external_state().get("running").and_then(Value::as_bool).unwrap_or(false)
                         })
                     }
-                    "status_dots" => json!({"voice": false, "gov": govorilka_ws::is_running()}),
+                    "status_dots" => {
+                        let gs = govorilka_ws::external_state();
+                        let running = gs.get("running").and_then(Value::as_bool).unwrap_or(false);
+                        let users_n = gs.get("users").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+                        let u = deepseek::usage();
+                        let pct = if u.r#in > 0 { (u.cached * 100) / u.r#in } else { 0 };
+                        json!({"voice": false, "gov": running, "gov_users": users_n, "cache_pct": pct})
+                    }
+                    "export_chat" => {
+                        let (title, display) = {
+                            let g = st.lock();
+                            (g.chat.title.clone(), g.chat.display.clone())
+                        };
+                        let dir = config::data_dir().join("studio").join("exports");
+                        let _ = std::fs::create_dir_all(&dir);
+                        let fname = format!("chat_{}.md", chrono::Local::now().format("%Y%m%d_%H%M%S"));
+                        let path = dir.join(&fname);
+                        let mut out = format!("# {}\n\n", if title.is_empty() { "Чат с Мартышкой" } else { &title });
+                        for m in &display {
+                            let role = if m.get("role").and_then(Value::as_str) == Some("user") { "Ты" } else { "Мартышка" };
+                            let txt = m.get("text").and_then(Value::as_str).unwrap_or("");
+                            out.push_str(&format!("### {role}\n\n{txt}\n\n---\n\n"));
+                        }
+                        if std::fs::write(&path, out).is_ok() {
+                            json!({"ok": true, "path": path.display().to_string(), "message": format!("Сохранено в {fname}")})
+                        } else {
+                            json!({"ok": false, "message": "Не удалось сохранить экспорт"})
+                        }
+                    }
                     "balances" => json!({"deepseek": deepseek::balance().await, "fish": fish::credits().await}),
                     "usage_info" => {
                         let u = deepseek::usage();
@@ -442,7 +501,7 @@ fn run_desktop_ui() {
                     "preview_voice" => {
                         let vid = args.first().and_then(Value::as_str).unwrap_or("").to_string();
                         let vol = config::get().voice_volume;
-                        match fish::speak_pcm("Привет! Я Мартышка на Rust. Как тебе мой голос?", Some(&vid), None, 0).await {
+                        match fish::speak_pcm("Привет! Я Мартышка. Как тебе мой голос?", Some(&vid), None, 0).await {
                             Ok(pcm) => {
                                 let _ = tokio::task::spawn_blocking(move || fish::play_pcm_blocking(pcm, vol, Arc::new(AtomicBool::new(false)))).await;
                                 json!({"ok": true})
@@ -517,64 +576,141 @@ fn run_desktop_ui() {
                     }
                     "gov_info" => {
                         let s = config::get();
+                        let ext = govorilka_ws::external_state();
+                        let running = ext.get("running").and_then(Value::as_bool).unwrap_or(false);
+                        let in_voice = ext.get("in_voice").and_then(Value::as_bool).unwrap_or(false);
+                        let muted = ext.get("muted").and_then(Value::as_bool).unwrap_or(false);
+                        let status = ext.get("status").and_then(Value::as_str).unwrap_or("Отключена").to_string();
+                        let users = ext.get("users").cloned().unwrap_or_else(|| json!([]));
+                        let uptime = ext.get("uptime").and_then(Value::as_u64).unwrap_or(0);
                         json!({
                             "nick": s.govorilka_nick,
-                            "status": govorilka_ws::status_text(),
-                            "running": govorilka_ws::is_running(),
-                            "cable": true,
+                            "status": status,
+                            "running": running,
+                            "in_voice": in_voice,
+                            "muted": muted,
+                            "users": users,
+                            "uptime": uptime,
                             "voice": s.govorilka_voice_id,
                             "model": s.govorilka_model,
-                            "autostart": false,
-                            "log": govorilka_ws::recent_log(80),
-                            "dialog": true,
+                            "log": govorilka_ws::recent_log(100),
                             "fish_model": s.govorilka_fish_model,
                             "fish_models": [
                                 ["", "По умолчанию (из Настроек)"],
-                                ["s2.1-pro-free", "S2.1 Pro Free (бесплатно, без кредитов)"],
+                                ["s2.1-pro-free", "S2.1 Pro Free (бесплатно, стабильные ударения)"],
                                 ["s2-pro", "S2-Pro (высокое качество)"],
-                                ["s2-pro-beta", "Drama 3 (s2-pro-beta, максимум эмоций)"]
-                            ],
-                            "greet": true,
-                            "chime": false
+                                ["s2-pro-beta", "Drama 3 (максимум эмоций)"]
+                            ]
                         })
                     }
                     "gov_action" => {
                         let act = args.first().and_then(Value::as_str).unwrap_or("");
                         let val = args.get(1);
+                        let val2 = args.get(2);
+                        let local = govorilka_ws::is_running();
                         match act {
-                            "join" => {
-                                if govorilka_ws::is_running() {
-                                    json!({"ok": true, "message": "Мартышка уже на сервере напрямую!"})
+                            "ensure_online" | "join" => {
+                                let ext_on = govorilka_ws::external_state().get("running").and_then(Value::as_bool).unwrap_or(false);
+                                if local {
+                                    govorilka_ws::join_voice_cmd();
+                                    json!({"ok": true, "message": "Захожу в войс!"})
+                                } else if ext_on {
+                                    govorilka_ws::enqueue_external_cmd(json!({"act": "join_voice"}));
+                                    json!({"ok": true, "message": "Команда входа в войс отправлена!"})
                                 } else {
-                                    let stop = {
-                                        let mut g = st.lock();
-                                        let ns = Arc::new(AtomicBool::new(false));
-                                        g.gov_stop = ns.clone();
-                                        ns
-                                    };
-                                    tokio::spawn(govorilka_ws::run_forever(stop));
-                                    json!({"ok": true, "message": "Подключаюсь напрямую к Говорилке (botgw)!"})
+                                    if let Ok(exe) = std::env::current_exe() {
+                                        let _ = std::process::Command::new(exe)
+                                            .arg("--govorilka")
+                                            .current_dir(config::project_dir())
+                                            .spawn();
+                                    }
+                                    json!({"ok": true, "message": "Запускаю 24/7 подключение к Говорилке!"})
                                 }
                             }
-                            "leave" | "quit" => {
-                                st.lock().gov_stop.store(true, Ordering::Relaxed);
-                                govorilka_ws::silence();
-                                json!({"ok": true, "message": "Отключаюсь от Говорилки."})
+                            "leave_voice" | "leave" => {
+                                if local {
+                                    govorilka_ws::leave_voice_cmd();
+                                } else {
+                                    govorilka_ws::enqueue_external_cmd(json!({"act": "leave_voice"}));
+                                }
+                                json!({"ok": true, "message": "Выхожу из войса (остаюсь в чате)."})
                             }
                             "silence" => {
-                                govorilka_ws::silence();
+                                if local {
+                                    govorilka_ws::silence();
+                                } else {
+                                    govorilka_ws::enqueue_external_cmd(json!({"act": "silence"}));
+                                }
                                 json!({"ok": true, "message": "Замолчала!"})
                             }
+                            "mute" => {
+                                let on = val.and_then(Value::as_bool).unwrap_or(false);
+                                if local {
+                                    govorilka_ws::set_muted_listen(on);
+                                } else {
+                                    govorilka_ws::enqueue_external_cmd(json!({"act": "mute", "val": on}));
+                                }
+                                json!({"ok": true, "message": if on { "Тихий режим включён (только слушаю)" } else { "Снова отвечаю голосом!" }})
+                            }
                             "morni" => {
-                                govorilka_ws::trigger_morni();
-                                json!({"ok": true, "message": "Режим разговора с Морни включён на 4 минуты!"})
+                                if local {
+                                    govorilka_ws::trigger_morni();
+                                } else {
+                                    govorilka_ws::enqueue_external_cmd(json!({"act": "morni"}));
+                                }
+                                json!({"ok": true, "message": "Диалог с Морни включён на 4 минуты!"})
+                            }
+                            "clear" => {
+                                if local {
+                                    govorilka_ws::clear_history();
+                                } else {
+                                    govorilka_ws::enqueue_external_cmd(json!({"act": "clear"}));
+                                }
+                                json!({"ok": true, "message": "Контекст беседы очищен ✓"})
+                            }
+                            "chat" => {
+                                let text = val.and_then(Value::as_str).unwrap_or("").trim();
+                                let ch = val2.and_then(Value::as_str).unwrap_or("общий");
+                                if text.is_empty() {
+                                    json!({"ok": false, "message": "Напиши текст сообщения"})
+                                } else {
+                                    if local {
+                                        govorilka_ws::send_chat_text(ch, text);
+                                    } else {
+                                        govorilka_ws::enqueue_external_cmd(json!({"act": "chat", "channel": ch, "text": text}));
+                                    }
+                                    json!({"ok": true, "message": format!("Отправлено в #{ch} ✓")})
+                                }
+                            }
+                            "say" => {
+                                let text = val.and_then(Value::as_str).unwrap_or("").trim();
+                                if text.is_empty() {
+                                    json!({"ok": false, "message": "Напиши, что сказать в войс"})
+                                } else {
+                                    if local {
+                                        govorilka_ws::speak_in_voice(text.to_string());
+                                    } else {
+                                        govorilka_ws::enqueue_external_cmd(json!({"act": "say", "text": text}));
+                                    }
+                                    json!({"ok": true, "message": "Озвучиваю в войс!"})
+                                }
+                            }
+                            "topic" | "debate" => {
+                                let topic = val.and_then(Value::as_str).unwrap_or("").trim();
+                                let with_morni = act == "debate";
+                                if local {
+                                    govorilka_ws::start_topic(topic.to_string(), with_morni);
+                                } else {
+                                    govorilka_ws::enqueue_external_cmd(json!({"act": "topic", "text": topic, "morni": with_morni}));
+                                }
+                                json!({"ok": true, "message": if with_morni { "Запускаю спор с Морни!" } else { "Вкидываю тему в войс!" }})
                             }
                             "model" => {
                                 let m = val.and_then(Value::as_str).unwrap_or(deepseek::FLASH).to_string();
                                 let mut mp = Map::new();
                                 mp.insert("GOVORILKA_MODEL".into(), json!(m));
                                 let _ = config::patch(mp);
-                                json!({"ok": true, "message": format!("Модель для Говорилки: {m}")})
+                                json!({"ok": true, "message": format!("Мозг в Говорилке: {m}")})
                             }
                             "fish_model" => {
                                 let fm = val.and_then(Value::as_str).unwrap_or("").to_string();

@@ -22,27 +22,59 @@
   --bg:#0b0c0e; --card:rgba(26,28,32,.68); --glass:rgba(26,28,32,.74);
   --acc:#64748b; --acc2:#94a3b8; --acc-rgb:148,163,184; --link:#cbd5e1;
 }
+[data-theme="sunset"]{
+  --bg:#100a08; --card:rgba(30,20,18,.64); --glass:rgba(32,21,18,.70);
+  --acc:#f59e0b; --acc2:#fb7185; --acc-rgb:245,158,11; --link:#fcd34d;
+}
+[data-theme="sakura"]{
+  --bg:#100910; --card:rgba(30,18,30,.64); --glass:rgba(32,19,32,.70);
+  --acc:#ec4899; --acc2:#f472b6; --acc-rgb:236,72,153; --link:#f9a8d4;
+}
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14.5px/1.58 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;overflow:hidden;transition:background .3s}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14.5px/1.62 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;overflow:hidden;transition:background .35s}
 button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 input,select,textarea{font:inherit;color:var(--text)}
-::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:8px}
+::-webkit-scrollbar{width:7px;height:7px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:8px}::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.26)}
 ::selection{background:rgba(var(--acc-rgb),.38)}
 
-#smoke{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:.52;filter:grayscale(1) contrast(1.25) brightness(.52)}
+#smoke{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:.48;filter:grayscale(1) contrast(1.22) brightness(.52)}
 body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
-  background:radial-gradient(65% 55% at 50% 18%,rgba(var(--acc-rgb),.11) 0%,transparent 65%),
-             radial-gradient(90% 70% at 50% 45%,transparent 30%,rgba(6,8,12,.86) 100%)}
+  background:radial-gradient(58% 48% at 22% 14%,rgba(var(--acc-rgb),.15) 0%,transparent 62%),
+             radial-gradient(52% 46% at 82% 24%,rgba(var(--acc-rgb),.10) 0%,transparent 60%),
+             radial-gradient(95% 75% at 50% 48%,transparent 28%,rgba(5,7,11,.88) 100%)}
 
-nav.top{position:relative;z-index:3;height:56px;display:flex;justify-content:center;align-items:stretch;gap:6px;border-bottom:1px solid var(--line);background:rgba(12,14,20,.58);backdrop-filter:blur(18px) saturate(1.25)}
-nav.top button.navb{display:flex;align-items:center;gap:8px;padding:0 14px;color:var(--muted);font-weight:600;font-size:14px;border-bottom:2px solid transparent;transition:.15s}
-nav.top button.navb svg{width:17px;height:17px}
-nav.top button.navb:hover{color:#fff}
-nav.top button.navb.on{color:#fff;border-bottom-color:var(--acc2)}
-.theme-pick{position:absolute;right:14px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:20px;background:rgba(255,255,255,.04);border:1px solid var(--line)}
-.theme-pick button{width:14px;height:14px;border-radius:50%;border:2px solid transparent;transition:.18s;padding:0}
-.theme-pick button:hover{transform:scale(1.18)}
-.theme-pick button.on{border-color:#fff;box-shadow:0 0 10px rgba(var(--acc-rgb),.8)}
+nav.top{position:relative;z-index:3;height:56px;display:flex;justify-content:center;align-items:stretch;gap:4px;border-bottom:1px solid var(--line);background:rgba(12,15,22,.56);backdrop-filter:blur(24px) saturate(1.45);box-shadow:0 1px 0 rgba(255,255,255,.04),0 10px 30px rgba(0,0,0,.22)}
+nav.top button.navb{display:flex;align-items:center;gap:7px;padding:0 13px;color:var(--muted);font-weight:600;font-size:13.8px;border-bottom:2px solid transparent;transition:.18s;position:relative}
+nav.top button.navb svg{width:16px;height:16px;opacity:.85}
+nav.top button.navb:hover{color:#fff;background:rgba(255,255,255,.03)}
+nav.top button.navb.on{color:#fff;border-bottom-color:var(--acc2);text-shadow:0 0 18px rgba(var(--acc-rgb),.45)}
+.nav-dot{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok);display:none}
+.nav-dot.on{display:inline-block}
+.nav-left{position:absolute;left:14px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:8px}
+.kbtn{display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:9px;background:rgba(255,255,255,.05);border:1px solid var(--line2);color:var(--muted);font-size:12px;font-weight:600;transition:.16s}
+.kbtn:hover{background:rgba(var(--acc-rgb),.18);border-color:rgba(var(--acc-rgb),.45);color:#fff}
+.theme-pick{position:absolute;right:14px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:20px;background:rgba(255,255,255,.05);border:1px solid var(--line2);backdrop-filter:blur(12px)}
+.theme-pick button{width:13px;height:13px;border-radius:50%;border:2px solid transparent;transition:.18s;padding:0}
+.theme-pick button:hover{transform:scale(1.22)}
+.theme-pick button.on{border-color:#fff;box-shadow:0 0 10px rgba(var(--acc-rgb),.85)}
+
+@keyframes msgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.mu,.ma{animation:msgIn .22s cubic-bezier(.2,.8,.2,1)}
+.user-chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+.uchip{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:20px;background:rgba(var(--acc-rgb),.13);border:1px solid rgba(var(--acc-rgb),.32);font-size:12.5px;font-weight:600;color:#e8f3ff}
+.uchip::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 7px var(--ok)}
+.cmd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-top:10px}
+.cmd-chip{display:flex;flex-direction:column;gap:2px;padding:9px 11px;border-radius:11px;background:rgba(0,0,0,.26);border:1px solid var(--line);text-align:left;transition:.15s}
+.cmd-chip:hover{background:rgba(var(--acc-rgb),.16);border-color:rgba(var(--acc-rgb),.45);transform:translateY(-1px)}
+.cmd-chip b{font:600 12.8px Consolas,"Cascadia Code",monospace;color:var(--link)}
+.cmd-chip small{font-size:11.8px;color:var(--muted)}
+.pal-box{width:min(540px,92vw);background:rgba(16,19,28,.92);border:1px solid var(--line2);border-radius:18px;padding:12px;box-shadow:0 30px 90px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.1);backdrop-filter:blur(26px) saturate(1.4)}
+.pal-in{width:100%;height:42px;border-radius:11px;background:rgba(0,0,0,.35);border:1px solid var(--line2);padding:0 14px;outline:none;font-size:14.5px}
+.pal-in:focus{border-color:rgba(var(--acc-rgb),.65)}
+.pal-list{margin-top:8px;max-height:340px;overflow:auto;display:flex;flex-direction:column;gap:3px}
+.pal-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;border-radius:10px;text-align:left;font-size:13.5px;color:#dbe2ef;transition:.12s}
+.pal-item:hover,.pal-item.on{background:rgba(var(--acc-rgb),.22);color:#fff}
+.pal-item small{color:var(--muted);font-size:12px}
 
 .page{position:relative;z-index:1;height:calc(100% - 56px);display:none;flex-direction:column}
 .page.on{display:flex}
@@ -290,10 +322,13 @@ kbd{font:11px Consolas;padding:1px 6px;border-radius:5px;background:rgba(255,255
 <body>
 <canvas id="smoke"></canvas>
 <nav class="top" id="nav">
+  <div class="nav-left">
+    <button class="kbtn" id="bPalette" title="Быстрые команды и поиск (Ctrl+K)">⌘ <kbd>Ctrl+K</kbd></button>
+  </div>
   <button class="navb on" data-p="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Главная</span></button>
   <button class="navb" data-p="voice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg><span>Голос</span></button>
   <button class="navb" data-p="brain"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/><path d="M3.3 7L12 12l8.7-5M12 22V12"/></svg><span>Модель</span></button>
-  <button class="navb" data-p="gov"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>Говорилка</span></button>
+  <button class="navb" data-p="gov"><span class="nav-dot" id="govNavDot"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>Говорилка</span></button>
   <button class="navb" data-p="memory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a7 7 0 0 0-4 12.7V19h8v-3.3A7 7 0 0 0 12 3zM9 22h6"/></svg><span>Память</span></button>
   <button class="navb" data-p="agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg><span>Агент</span></button>
   <button class="navb" data-p="system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Настройки</span></button>
@@ -301,6 +336,8 @@ kbd{font:11px Consolas;padding:1px 6px;border-radius:5px;background:rgba(255,255
     <button data-th="cyan" style="background:#1698ff" title="Неон-голубой (под шар)"></button>
     <button data-th="violet" style="background:#8b6cf6" title="Фиолетовый"></button>
     <button data-th="emerald" style="background:#10b981" title="Изумруд"></button>
+    <button data-th="sunset" style="background:#f59e0b" title="Янтарный закат"></button>
+    <button data-th="sakura" style="background:#ec4899" title="Сакура"></button>
     <button data-th="graphite" style="background:#7c8a9e" title="Строгий графит"></button>
   </div>
 </nav>
@@ -326,6 +363,7 @@ kbd{font:11px Consolas;padding:1px 6px;border-radius:5px;background:rgba(255,255
     <select class="sel" id="proj" title="Активный проект для этого чата" style="max-width:190px">
       <option value="">Проект: авто</option>
     </select>
+    <button class="chip" id="bExport" title="Сохранить этот чат в Markdown (.md)">⤓ .md</button>
     <button class="accbtn" id="bNew" title="Новый чат"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
   </div>
   <div id="scroll"><div id="thread"></div></div>
@@ -358,6 +396,11 @@ kbd{font:11px Consolas;padding:1px 6px;border-radius:5px;background:rgba(255,255
   <div class="chats" id="chats"></div>
   <div class="foot"><div>DeepSeek: <b id="balDs">…</b></div><div>Fish Audio: <b id="balFish">…</b></div></div>
 </div>
+
+<div class="modal" id="palette"><div class="pal-box">
+  <input class="pal-in" id="palIn" placeholder="Поиск команды, вкладки или темы… (Esc — закрыть)">
+  <div class="pal-list" id="palList"></div>
+</div></div>
 
 <div class="modal" id="confirm"><div class="perm">
   <div class="t2"><div class="shield"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffc14f" stroke-width="2"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M12 8v5M12 16h.01"/></svg></div>
@@ -956,36 +999,88 @@ async function voicePicker(c,f){
 }
 
 async function renderGov(){ const box=$('#pg');
+  const CMDS=[
+    ['!войс','Зайти в голосовой канал'],
+    ['!выйди','Выйти из войса (остаться в чате)'],
+    ['!стоп','Мгновенно замолчать'],
+    ['!тише / !слушай','Тихий режим / снова отвечать'],
+    ['!скажи <текст>','Озвучить фразу в войс'],
+    ['!напиши <текст>','Написать от имени Мартышки'],
+    ['!тема <тема>','Вкинуть тему в войс'],
+    ['!морни [тема]','Разговор или спор с Морни (4 мин)'],
+    ['!голос <имя>','Сменить голос Fish Audio'],
+    ['!движок free|pro|drama','Переключить движок озвучки'],
+    ['!мозг flash|pro','Переключить модель DeepSeek'],
+    ['!кто','Кто сейчас в войсе'],
+    ['!память <имя>','Что помнит о человеке'],
+    ['!запомни имя | факт','Записать факт в память'],
+    ['!забудь имя | факт','Удалить факт из памяти'],
+    ['!успокойся [имя]','Сбросить злость на человека/всех'],
+    ['!сброс','Очистить контекст текущей беседы'],
+    ['!баланс / !статус','Балансы API и статус 24/7']
+  ];
+  const fmtUp=s=>{ if(!s) return ''; const h=Math.floor(s/3600), m=Math.floor((s%3600)/60); return h?`${h}ч ${m}м`:`${m}м ${s%60}с`; };
   const fill=async first=>{ const g=await api().gov_info();
-    if(first){ box.innerHTML=`<h2>Говорилка</h2><p class="pd">Мартышка сидит на голосовом сервере отдельным участником «${esc(g.nick)}».</p>
-      <div class="sec"><div class="card" style="margin:12px 0"><h4>Статус <span class="pill" id="gst"></span></h4><small id="gstatus" style="color:var(--muted)"></small>
-        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn pri" id="gJoin">Зайти в войс</button><button class="btn" id="gLeave">Выйти с войса</button><button class="btn red" id="gSilence">Замолчи</button><button class="btn" id="gMorni">Начать диалог с Морни</button><button class="btn red" id="gQuit">Уйти с сервера совсем</button></div>
-        <div style="display:flex;gap:8px;margin-top:10px"><input class="in" id="gTopic" style="flex:1" placeholder="Тема спора с Морни: например, «кошки лучше собак»"><button class="btn" id="gDebate">Спор с Морни</button></div>
-        ${g.cable?'':'<div class="note" style="margin:12px 0 0">Нужен виртуальный кабель <b>VB-CABLE</b>.</div>'}</div>
-        <div class="field"><div class="lab"><b>Мозг в войсе</b><small>Flash отвечает быстрее, Pro — умнее.</small></div><div class="ctl"><select class="in" id="gModel"><option value="deepseek-flash">DeepSeek Flash</option><option value="deepseek-v4-pro">DeepSeek Pro</option></select></div></div>
-        <div class="field"><div class="lab"><b>Озвучка в войсе</b><small>S2.1 Pro Free — бесплатно. Drama 3 — самая живая подача, но платная (кончатся кредиты — сама вернётся на бесплатную).</small></div><div class="ctl"><select class="in" id="gFish">${g.fish_models.map(([k,n])=>`<option value="${k}" ${k===g.fish_model?'selected':''}>${esc(n)}</option>`).join('')}</select></div></div>
-        <div class="field"><div class="lab"><b>Здороваться и прощаться</b><small>Кто зашёл в войс — здоровается по имени (вспоминает что-то о нём), кто ушёл — прощается.</small></div><div class="ctl"><div class="tog ${g.greet?'on':''}" id="gGreet"></div></div></div>
-        <div class="field"><div class="lab"><b>Сама решает, когда вмешаться</b><small>Иногда прислушивается к чужому разговору и вступает, если правда есть что сказать (иначе молчит); в долгой тишине может сама заговорить о том, что людям интересно. Никогда не говорит поверх.</small></div><div class="ctl"><div class="tog ${g.chime?'on':''}" id="gChime"></div></div></div>
-        <div class="field"><div class="lab"><b>Режим диалога</b><small>Откликается только на имя «Мартышка», сама разговор не заводит, дослушивает собеседника до конца (2 с тишины) и не говорит поверх: заговорили во время её ответа — замолкает и слушает.</small></div><div class="ctl"><div class="tog ${g.dialog?'on':''}" id="gDialog"></div></div></div>
-        <div class="field"><div class="lab"><b>Сидеть в Говорилке всегда</b><small>Заходит сама при включении ПК и возвращается, если выкинуло.</small></div><div class="ctl"><div class="tog ${g.autostart?'on':''}" id="gAuto"></div></div></div></div>
+    if(first){ box.innerHTML=`<h2>Говорилка · 24/7</h2>
+      <p class="pd">Мартышка подключена напрямую к серверу как «${esc(g.nick)}» — без второго окна и кабелей. Выход из войса и команды работают <b>только от тебя</b> (в чате и голосом в войсе).</p>
+      <div class="sec">
+        <div class="card" style="margin:12px 0">
+          <h4>Прямое подключение <span class="pill" id="gst"></span> <span class="pill" id="gvoice"></span> <small id="gup" style="margin-left:auto;color:var(--muted);font-weight:400"></small></h4>
+          <small id="gstatus" style="color:var(--muted)"></small>
+          <div class="user-chips" id="gUsers"></div>
+          <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+            <button class="btn pri" id="gEnsure" style="display:none">Восстановить связь</button>
+            <button class="btn red" id="gSilence">Замолчи</button>
+            <button class="btn" id="gMute">Тихий режим</button>
+            <button class="btn" id="gMorni">Поговорить с Морни</button>
+            <button class="btn" id="gClear">Сбросить контекст</button>
+          </div>
+        </div>
+        <div class="card" style="margin:10px 0">
+          <h4>Пульт прямого эфира</h4>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <select class="in" id="gChan" style="width:118px;flex:none"><option value="общий">#общий</option><option value="игры">#игры</option><option value="флуд">#флуд</option></select>
+            <input class="in" id="gSay" style="flex:1;min-width:180px" placeholder="Фраза для войса или сообщение в чат…">
+            <button class="btn pri" id="gDoSay">Сказать в войс</button>
+            <button class="btn" id="gDoChat">В чат</button>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <input class="in" id="gTopic" style="flex:1;min-width:180px" placeholder="Тема для обсуждения или спора с Морни…">
+            <button class="btn" id="gDoTopic">Вкинуть тему</button>
+            <button class="btn" id="gDebate">Спор с Морни</button>
+          </div>
+        </div>
+        <div class="field"><div class="lab"><b>Мозг на сервере</b><small>Flash отвечает мгновенно, Pro — думает глубже.</small></div><div class="ctl"><select class="in" id="gModel"><option value="deepseek-flash">DeepSeek Flash</option><option value="deepseek-v4-pro">DeepSeek Pro</option></select></div></div>
+        <div class="field"><div class="lab"><b>Озвучка в войсе</b><small>S2.1 Pro Free — бесплатно со стабильными русскими ударениями. Drama 3 — максимум эмоций (платно).</small></div><div class="ctl"><select class="in" id="gFish">${g.fish_models.map(([k,n])=>`<option value="${k}" ${k===g.fish_model?'selected':''}>${esc(n)}</option>`).join('')}</select></div></div>
+      </div>
+      <div class="sec"><h3>Команды хозяина в чате Говорилки</h3><p class="sd">Кликни по команде, чтобы скопировать. В войсе скажи «Мартышка, выйди» — выйдет только по твоей просьбе.</p>
+        <div class="cmd-grid" id="gCmds">${CMDS.map(([c,d])=>`<button class="cmd-chip" data-c="${esc(c.split(' ')[0])}"><b>${esc(c)}</b><small>${esc(d)}</small></button>`).join('')}</div>
+      </div>
       <div class="sec"><h3>Голос в Говорилке</h3><div id="gVoice" style="padding:8px 0 14px"></div></div>
-      <div class="sec"><h3>Что там говорили</h3><div class="log" id="gLog" style="margin:8px 0 14px"></div></div>`;
+      <div class="sec"><h3>Живой журнал</h3><div class="log" id="gLog" style="margin:8px 0 14px"></div></div>`;
       $('#gModel').value=g.model; $('#gModel').onchange=async()=>toast((await api().gov_action('model',$('#gModel').value)).message);
       $('#gFish').onchange=async()=>toast((await api().gov_action('fish_model',$('#gFish').value)).message);
-      $('#gGreet').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('greet',ev.target.classList.contains('on'))).message); };
-      $('#gChime').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('chime',ev.target.classList.contains('on'))).message); };
-      $('#gDialog').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('dialog',ev.target.classList.contains('on'))).message); };
-      $('#gAuto').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('autostart',ev.target.classList.contains('on'))).message); };
-      $('#gJoin').onclick=async()=>{ toast((await api().gov_action('join')).message); fill(); };
-      $('#gDebate').onclick=async()=>{ toast((await api().gov_action('debate',$('#gTopic').value)).message); setTimeout(()=>fill(),5000); };
-      $('#gMorni').onclick=async()=>{ toast((await api().gov_action('morni')).message); setTimeout(()=>fill(),4000); };
+      $('#gEnsure').onclick=async()=>{ toast((await api().gov_action('ensure_online')).message); setTimeout(()=>fill(false),1500); };
       $('#gSilence').onclick=async()=>{ toast((await api().gov_action('silence')).message); };
-      $('#gLeave').onclick=async()=>{ toast((await api().gov_action('leave')).message); fill(); };
-      $('#gQuit').onclick=async()=>{ if(!confirm('Мартышка уйдёт с сервера совсем и не вернётся сама. Точно?')) return; toast((await api().gov_action('quit')).message); fill(); };
+      $('#gMute').onclick=async()=>{ const next=!$('#gMute').classList.contains('pri'); toast((await api().gov_action('mute',next)).message); fill(false); };
+      $('#gMorni').onclick=async()=>{ toast((await api().gov_action('morni')).message); };
+      $('#gClear').onclick=async()=>{ toast((await api().gov_action('clear')).message); };
+      $('#gDoSay').onclick=async()=>{ const t=$('#gSay').value.trim(); if(!t) return; toast((await api().gov_action('say',t)).message); $('#gSay').value=''; };
+      $('#gDoChat').onclick=async()=>{ const t=$('#gSay').value.trim(); if(!t) return; toast((await api().gov_action('chat',t,$('#gChan').value)).message); $('#gSay').value=''; };
+      $('#gDoTopic').onclick=async()=>{ const t=$('#gTopic').value.trim(); toast((await api().gov_action('topic',t)).message); $('#gTopic').value=''; };
+      $('#gDebate').onclick=async()=>{ const t=$('#gTopic').value.trim(); toast((await api().gov_action('debate',t)).message); $('#gTopic').value=''; };
+      box.querySelectorAll('.cmd-chip').forEach(b=>b.onclick=()=>{ navigator.clipboard?.writeText(b.dataset.c); toast('Скопировано: '+b.dataset.c); });
       const vc=document.createElement('div'); $('#gVoice').appendChild(vc); voicePicker(vc,{key:'GOVORILKA_VOICE_ID',value:g.voice,instant:true}); }
-    const s=$('#gst'); if(!s) return; s.textContent=g.running?'на сервере':'нет на сервере'; s.className='pill '+(g.running?'ok':'');
-    $('#gstatus').textContent=g.status; const lg=$('#gLog'); const atB=lg.scrollHeight-lg.scrollTop-lg.clientHeight<30; lg.textContent=g.log||'Пока тихо.'; if(atB) lg.scrollTop=lg.scrollHeight; };
-  await fill(true); pageTimer=setInterval(()=>fill(false),4000); }
+    const s=$('#gst'); if(!s) return;
+    s.textContent=g.running?'В сети 24/7':'Не в сети'; s.className='pill '+(g.running?'ok':'');
+    const gv=$('#gvoice'); gv.textContent=g.in_voice?'В войсе':'Только в чате'; gv.className='pill '+(g.in_voice?'ok':'');
+    $('#gup').textContent=g.running&&g.uptime?'онлайн '+fmtUp(g.uptime):'';
+    $('#gEnsure').style.display=g.running?'none':'inline-flex';
+    const mb=$('#gMute'); mb.classList.toggle('pri',!!g.muted); mb.textContent=g.muted?'Тихий режим: ВКЛ':'Тихий режим';
+    $('#gstatus').textContent=g.status;
+    $('#gUsers').innerHTML=(g.users||[]).length?(g.users||[]).map(u=>`<span class="uchip">${esc(u)}</span>`).join(''):'<small style="color:var(--dim)">В войсе пока никого</small>';
+    const lg=$('#gLog'); const atB=lg.scrollHeight-lg.scrollTop-lg.clientHeight<30; lg.textContent=g.log||'Пока тихо.'; if(atB) lg.scrollTop=lg.scrollHeight; };
+  await fill(true); pageTimer=setInterval(()=>fill(false),3000); }
 
 async function renderMemory(tab){ tab=tab||'people'; const box=$('#pm'); const m=await api().memory_info();
   box.innerHTML=`<h2>Память</h2><p class="pd">Мартышка помнит всё: голос, чат, Говорилку и Telegram.</p><div class="subtabs">${[['people','Люди'],['days','Дни'],['facts','Факты'],['lessons','Мой опыт']].map(([k,n])=>`<button data-t="${k}" class="${k===tab?'on':''}">${n}</button>`).join('')}</div><div class="sec" id="mbody"></div>`;
@@ -1015,13 +1110,54 @@ async function renderMemory(tab){ tab=tab||'people'; const box=$('#pm'); const m
     m.facts.forEach(([src,f])=>{ const li=document.createElement('li'); li.innerHTML='<span></span><button title="Забыть">✕</button>'; li.querySelector('span').textContent=f; li.querySelector('button').onclick=async()=>{ await api().forget_fact(src,f); renderMemory('facts'); }; ul.appendChild(li); }); }
 }
 
+const PAL_ITEMS=[
+  {t:'Новый чат',k:'Чат',run:()=>$('#bNew').click()},
+  {t:'Экспорт текущего чата в Markdown (.md)',k:'Чат',run:()=>$('#bExport').click()},
+  {t:'Снимок экрана',k:'Инструмент',run:()=>{ show('home'); $('#bSnap').click(); }},
+  {t:'Открыть Говорилку 24/7',k:'Вкладка',run:()=>show('gov')},
+  {t:'Говорилка: Замолчи',k:'Говорилка',run:async()=>toast((await api().gov_action('silence')).message)},
+  {t:'Говорилка: Поговорить с Морни',k:'Говорилка',run:async()=>toast((await api().gov_action('morni')).message)},
+  {t:'Открыть Память и опыт',k:'Вкладка',run:()=>show('memory')},
+  {t:'Открыть Голос',k:'Вкладка',run:()=>show('voice')},
+  {t:'Открыть Настройки',k:'Вкладка',run:()=>show('system')},
+  {t:'Тема: Неон-голубой',k:'Дизайн',run:()=>setTheme('cyan')},
+  {t:'Тема: Фиолетовый',k:'Дизайн',run:()=>setTheme('violet')},
+  {t:'Тема: Изумруд',k:'Дизайн',run:()=>setTheme('emerald')},
+  {t:'Тема: Янтарный закат',k:'Дизайн',run:()=>setTheme('sunset')},
+  {t:'Тема: Сакура',k:'Дизайн',run:()=>setTheme('sakura')},
+  {t:'Тема: Графит',k:'Дизайн',run:()=>setTheme('graphite')},
+];
+let palIdx=0, palFiltered=PAL_ITEMS;
+function renderPal(){ const q=($('#palIn').value||'').toLowerCase().trim();
+  palFiltered=PAL_ITEMS.filter(x=>!q||x.t.toLowerCase().includes(q)||x.k.toLowerCase().includes(q));
+  palIdx=Math.min(palIdx,Math.max(0,palFiltered.length-1));
+  const list=$('#palList'); list.innerHTML='';
+  palFiltered.forEach((x,i)=>{ const b=document.createElement('button'); b.className='pal-item'+(i===palIdx?' on':'');
+    b.innerHTML=`<span>${esc(x.t)}</span><small>${esc(x.k)}</small>`;
+    b.onclick=()=>{ closePal(); x.run(); }; list.appendChild(b); });
+}
+function openPal(){ $('#palette').classList.add('show'); $('#palIn').value=''; palIdx=0; renderPal(); $('#palIn').focus(); }
+function closePal(){ $('#palette').classList.remove('show'); }
+$('#bPalette').onclick=openPal;
+$('#palette').onclick=ev=>{ if(ev.target===$('#palette')) closePal(); };
+$('#palIn').oninput=()=>{ palIdx=0; renderPal(); };
+$('#palIn').onkeydown=ev=>{
+  if(ev.key==='Escape'){ closePal(); return; }
+  if(ev.key==='ArrowDown'){ ev.preventDefault(); palIdx=(palIdx+1)%Math.max(1,palFiltered.length); renderPal(); }
+  else if(ev.key==='ArrowUp'){ ev.preventDefault(); palIdx=(palIdx-1+Math.max(1,palFiltered.length))%Math.max(1,palFiltered.length); renderPal(); }
+  else if(ev.key==='Enter' && palFiltered[palIdx]){ ev.preventDefault(); const x=palFiltered[palIdx]; closePal(); x.run(); }
+};
+window.addEventListener('keydown',ev=>{ if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==='k'){ ev.preventDefault(); $('#palette').classList.contains('show')?closePal():openPal(); } });
+$('#bExport').onclick=async()=>{ const r=await api().export_chat(); toast(r.message||'Экспорт готов'); if(r.ok&&r.path) api().open_path(r.path); };
+
 window.addEventListener('pywebviewready', async()=>{
   const r=await api().init();
   applyTheme(r.theme||'cyan');
   $('#model').value=['auto','flash','pro'].includes(r.brain_mode)?r.brain_mode:'auto';
   st.speak=!!r.chat_speak; $('#bSpeak').classList.toggle('on',st.speak); $('#vol').value=r.volume||1;
-  setVoice(r.voice); emptyChat(); refreshChats(); refreshProjects(); refreshBalance(); autosize();
-  setInterval(async()=>{ try{ setVoice((await api().status_dots()).voice); }catch(e){} },5000);
+  setVoice(r.voice); $('#govNavDot')?.classList.toggle('on',!!r.gov);
+  emptyChat(); refreshChats(); refreshProjects(); refreshBalance(); autosize();
+  setInterval(async()=>{ try{ const d=await api().status_dots(); setVoice(d.voice); $('#govNavDot')?.classList.toggle('on',!!d.gov); }catch(e){} },4000);
   if(!r.ready) show('brain'); else if(r.tab && r.tab!=='chat') show(r.tab==='settings'?'system':r.tab);
   input.focus();
 });

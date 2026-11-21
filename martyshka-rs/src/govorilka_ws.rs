@@ -24,22 +24,69 @@ static NAME_RX: Lazy<Regex> = Lazy::new(|| {
 static STOP_RX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\b(стоп|хватит|замолчи|заткнись|помолчи|тихо|прекрати|stop|shut up)\b").unwrap()
 });
+static LEAVE_VOICE_RX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)(выйди\s+(?:из|с)\s+войс\w*|уйди\s+(?:из|с)\s+войс\w*|покинь\s+войс\w*|выйди\s+из\s+комнат\w*|выйди\s+с\s+комнат\w*|выходи\s+(?:из|с)\s+войс\w*|\bвыйди\b.*\bвойс\w*|\bливай\b)").unwrap()
+});
 static TON_RX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\[\s*ТОН\s*:\s*(\d)\s*\]").unwrap());
 static MEM_RX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\[\s*ЗАПОМНИ\s+О\s*:\s*([^|\]]+)\|\s*([^\]]+)\]").unwrap());
 static ANY_BRACKET_TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[\s*(?:ТОН|КТО|ЗАПОМНИ\s+О|УРОК|ОПЫТ|ИНТЕРЕС|МОЛЧУ)[^\]]*\]").unwrap());
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
+static IN_VOICE: AtomicBool = AtomicBool::new(false);
+static MUTED_LISTEN: AtomicBool = AtomicBool::new(false);
 static STATUS_TXT: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("Отключена".into()));
+static USERS_LIST: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(Vec::new()));
+static CONNECTED_AT: Lazy<Mutex<Option<Instant>>> = Lazy::new(|| Mutex::new(None));
 static ACTIVE_TX: Lazy<Mutex<Option<mpsc::UnboundedSender<Message>>>> = Lazy::new(|| Mutex::new(None));
 static ACTIVE_SPEAK_STOP: Lazy<Mutex<Option<Arc<AtomicBool>>>> = Lazy::new(|| Mutex::new(None));
 static ACTIVE_MORNI_UNTIL: Lazy<Mutex<Option<Arc<Mutex<Option<Instant>>>>>> = Lazy::new(|| Mutex::new(None));
+static ACTIVE_HISTORY: Lazy<Mutex<Option<Arc<Mutex<Vec<Value>>>>>> = Lazy::new(|| Mutex::new(None));
 
 pub fn is_running() -> bool {
     RUNNING.load(Ordering::Relaxed)
 }
 
+pub fn in_voice() -> bool {
+    IN_VOICE.load(Ordering::Relaxed)
+}
+
+pub fn is_muted_listen() -> bool {
+    MUTED_LISTEN.load(Ordering::Relaxed)
+}
+
+pub fn set_muted_listen(muted: bool) {
+    MUTED_LISTEN.store(muted, Ordering::Relaxed);
+}
+
 pub fn status_text() -> String {
     STATUS_TXT.lock().clone()
+}
+
+pub fn users() -> Vec<String> {
+    USERS_LIST.lock().clone()
+}
+
+pub fn uptime_secs() -> u64 {
+    CONNECTED_AT.lock().map(|t| t.elapsed().as_secs()).unwrap_or(0)
+}
+
+pub fn join_voice_cmd() -> bool {
+    if let Some(tx) = ACTIVE_TX.lock().as_ref() {
+        let _ = tx.send(Message::Text(json!({"type": "join_voice"}).to_string().into()));
+        IN_VOICE.store(true, Ordering::Relaxed);
+        return true;
+    }
+    false
+}
+
+pub fn leave_voice_cmd() -> bool {
+    silence();
+    if let Some(tx) = ACTIVE_TX.lock().as_ref() {
+        let _ = tx.send(Message::Text(json!({"type": "leave_voice"}).to_string().into()));
+        IN_VOICE.store(false, Ordering::Relaxed);
+        return true;
+    }
+    false
 }
 
 pub fn silence() {
@@ -55,6 +102,185 @@ pub fn trigger_morni() {
     if let Some(m) = ACTIVE_MORNI_UNTIL.lock().as_ref() {
         *m.lock() = Some(Instant::now() + Duration::from_secs(240));
     }
+}
+
+pub fn clear_history() {
+    if let Some(h) = ACTIVE_HISTORY.lock().as_ref() {
+        h.lock().clear();
+    }
+}
+
+pub fn send_chat_text(channel: &str, text: &str) -> bool {
+    let ch = if channel.trim().is_empty() { "общий" } else { channel.trim() };
+    let t = text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if let Some(tx) = ACTIVE_TX.lock().as_ref() {
+        log_line("Мартышка → чат", &format!("[#{ch}] {t}"));
+        return tx
+            .send(Message::Text(json!({"type": "chat_send", "text": t, "channel": ch}).to_string().into()))
+            .is_ok();
+    }
+    false
+}
+
+pub fn speak_in_voice(text: String) -> bool {
+    let t = text.trim().to_string();
+    if t.is_empty() {
+        return false;
+    }
+    let Some(tx) = ACTIVE_TX.lock().clone() else { return false };
+    let speak_stop = ACTIVE_SPEAK_STOP.lock().clone().unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    tokio::spawn(async move {
+        stream_tts_to_gateway(&t, 0, &tx, &speak_stop).await;
+    });
+    true
+}
+
+pub fn start_topic(topic: String, with_morni: bool) -> bool {
+    let Some(tx) = ACTIVE_TX.lock().clone() else { return false };
+    let speak_stop = ACTIVE_SPEAK_STOP.lock().clone().unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    let history = ACTIVE_HISTORY.lock().clone().unwrap_or_else(|| Arc::new(Mutex::new(Vec::new())));
+    if with_morni {
+        trigger_morni();
+    }
+    tokio::spawn(async move {
+        let t = topic.trim().to_string();
+        let prompt = if with_morni {
+            if t.is_empty() {
+                "Заведи живой, весёлый разговор с Морни прямо сейчас. Начни реплику с «Морни,».".to_string()
+            } else {
+                format!("Начни живой спор/обсуждение с Морни на тему: «{t}». Начни реплику с «Морни,».")
+            }
+        } else if t.is_empty() {
+            "Вкинь интересную, живую тему для разговора в голосовой комнате прямо сейчас.".to_string()
+        } else {
+            format!("Вкинь в голосовой комнате тему для обсуждения: «{t}». Скажи живо и по-свойски.")
+        };
+        let sys = system_prompt("брат", 0, with_morni, false, &prompt);
+        let msgs = vec![
+            json!({"role": "system", "content": sys}),
+            json!({"role": "user", "content": prompt}),
+        ];
+        let model = config::get().govorilka_model;
+        if let Ok(r) = deepseek::stream_chat(msgs, &model, false, "low", 2000, None, Arc::new(AtomicBool::new(false)), |_| {}, |_| {}).await {
+            let clean = clean_reply_tags(&r.text, "брат");
+            if !clean.is_empty() {
+                log_line("Мартышка", &clean);
+                history.lock().push(json!({"role": "assistant", "content": clean.clone()}));
+                stream_tts_to_gateway(&clean, 0, &tx, &speak_stop).await;
+            }
+        }
+    });
+    true
+}
+
+fn live_state_path() -> std::path::PathBuf {
+    config::data_dir().join("govorilka_bot").join("live_state.json")
+}
+
+fn cmd_queue_path() -> std::path::PathBuf {
+    config::data_dir().join("govorilka_bot").join("cmd_queue.jsonl")
+}
+
+fn write_live_state(running: bool) {
+    let dir = config::data_dir().join("govorilka_bot");
+    let _ = std::fs::create_dir_all(&dir);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let obj = json!({
+        "pid": std::process::id(),
+        "running": running,
+        "in_voice": IN_VOICE.load(Ordering::Relaxed),
+        "muted": MUTED_LISTEN.load(Ordering::Relaxed),
+        "status": STATUS_TXT.lock().clone(),
+        "users": USERS_LIST.lock().clone(),
+        "uptime": uptime_secs(),
+        "updated": ts
+    });
+    let _ = std::fs::write(live_state_path(), obj.to_string());
+}
+
+/// Прочитать состояние (либо локального процесса, либо фонового 24/7 `--govorilka`).
+pub fn external_state() -> Value {
+    if is_running() {
+        return json!({
+            "running": true,
+            "in_voice": in_voice(),
+            "muted": is_muted_listen(),
+            "status": status_text(),
+            "users": users(),
+            "uptime": uptime_secs()
+        });
+    }
+    if let Ok(raw) = std::fs::read_to_string(live_state_path()) {
+        if let Ok(v) = serde_json::from_str::<Value>(&raw) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let upd = v.get("updated").and_then(Value::as_u64).unwrap_or(0);
+            if v.get("running").and_then(Value::as_bool).unwrap_or(false) && now.saturating_sub(upd) <= 35 {
+                return v;
+            }
+        }
+    }
+    json!({
+        "running": false,
+        "in_voice": false,
+        "muted": false,
+        "status": "Отключена",
+        "users": [],
+        "uptime": 0
+    })
+}
+
+/// Отправить команду фоновому 24/7 процессу `--govorilka` (если бот крутится не в этом процессе).
+pub fn enqueue_external_cmd(cmd: Value) {
+    let dir = config::data_dir().join("govorilka_bot");
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(cmd_queue_path()) {
+        let _ = writeln!(f, "{}", cmd);
+    }
+}
+
+fn poll_external_cmds() {
+    let p = cmd_queue_path();
+    let Ok(raw) = std::fs::read_to_string(&p) else { return };
+    if raw.trim().is_empty() {
+        return;
+    }
+    let _ = std::fs::write(&p, "");
+    for line in raw.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line.trim()) else { continue };
+        match v.get("act").and_then(Value::as_str).unwrap_or("") {
+            "silence" => silence(),
+            "morni" => trigger_morni(),
+            "join_voice" => { join_voice_cmd(); }
+            "leave_voice" => { leave_voice_cmd(); }
+            "mute" => set_muted_listen(v.get("val").and_then(Value::as_bool).unwrap_or(false)),
+            "clear" => clear_history(),
+            "chat" => {
+                let ch = v.get("channel").and_then(Value::as_str).unwrap_or("общий");
+                let txt = v.get("text").and_then(Value::as_str).unwrap_or("");
+                send_chat_text(ch, txt);
+            }
+            "say" => {
+                let txt = v.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+                speak_in_voice(txt);
+            }
+            "topic" => {
+                let txt = v.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+                let morni = v.get("morni").and_then(Value::as_bool).unwrap_or(false);
+                start_topic(txt, morni);
+            }
+            _ => {}
+        }
+    }
+    write_live_state(true);
 }
 
 pub fn recent_log(max_lines: usize) -> String {
@@ -73,6 +299,32 @@ fn log_line(tag: &str, text: &str) {
         let _ = writeln!(f, "{line}");
     }
     println!("{line}");
+}
+
+async fn stream_tts_to_gateway(
+    text: &str,
+    anger: i32,
+    tx: &mpsc::UnboundedSender<Message>,
+    speak_stop: &Arc<AtomicBool>,
+) {
+    speak_stop.store(false, Ordering::Relaxed);
+    let s = config::get();
+    let vid = if s.govorilka_voice_id.is_empty() { s.voice_id.as_str() } else { s.govorilka_voice_id.as_str() };
+    let fmdl = if s.govorilka_fish_model.is_empty() { s.fish_model.as_str() } else { s.govorilka_fish_model.as_str() };
+    match fish::speak_pcm_bytes(text, Some(vid), Some(fmdl), anger).await {
+        Ok(pcm24) => {
+            for chunk in pcm24.chunks(9600) {
+                if speak_stop.load(Ordering::Relaxed) {
+                    let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
+                    break;
+                }
+                if tx.send(Message::Binary(chunk.to_vec().into())).is_err() {
+                    break;
+                }
+            }
+        }
+        Err(e) => log_line("ошибка", &format!("Fish Audio: {e}")),
+    }
 }
 
 /// Децимация PCM s16le mono 48 кГц → 16 кГц WAV для DeepSeek ASR.
@@ -171,41 +423,128 @@ pub(crate) fn clean_reply_tags(raw: &str, who: &str) -> String {
     ANY_BRACKET_TAG.replace_all(raw, "").split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Обработка команд управления из текстового чата (только от хозяина sitth).
+fn fmt_uptime(secs: u64) -> String {
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format!("{h}ч {m}м")
+    } else if m > 0 {
+        format!("{m}м {s}с")
+    } else {
+        format!("{s}с")
+    }
+}
+
+/// Обработка команд управления из текстового чата (только от хозяина sitth / sitthome).
 async fn handle_owner_chat_cmd(
     text: &str,
     channel: &str,
     tx: &mpsc::UnboundedSender<Message>,
     speak_stop: &Arc<AtomicBool>,
-    in_voice: &Arc<AtomicBool>,
     morni_until: &Arc<Mutex<Option<Instant>>>,
+    history: &Arc<Mutex<Vec<Value>>>,
 ) -> Option<String> {
-    let low = text.trim().to_lowercase();
+    let trimmed = text.trim();
+    let low = trimmed.to_lowercase();
+
+    if low == "!помощь" || low == "!команды" || low == "!help" {
+        return Some(
+            "Команды хозяина: !войс · !выйди · !стоп · !тише · !слушай · !скажи <текст> · !напиши <текст> · \
+!тема <тема> · !морни [тема] · !голос <имя> · !движок free|pro|drama · !мозг flash|pro · \
+!кто · !память <имя> · !запомни <имя> | <факт> · !забудь <имя> | <факт> · !успокойся [имя] · !сброс · !баланс · !статус"
+                .into(),
+        );
+    }
     if low == "!войс" || low.contains("зайди в войс") {
         let _ = tx.send(Message::Text(json!({"type": "join_voice"}).to_string().into()));
-        in_voice.store(true, Ordering::Relaxed);
+        IN_VOICE.store(true, Ordering::Relaxed);
         return Some("Захожу в войс!".into());
     }
     if low == "!выйди" || low.contains("выйди с войса") || low.contains("выйди из войса") {
         speak_stop.store(true, Ordering::Relaxed);
         let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
         let _ = tx.send(Message::Text(json!({"type": "leave_voice"}).to_string().into()));
-        in_voice.store(false, Ordering::Relaxed);
-        return Some("Вышла с войса, сижу в чате.".into());
+        IN_VOICE.store(false, Ordering::Relaxed);
+        return Some("Вышла с войса, остаюсь в чате.".into());
     }
     if low == "!стоп" || low == "!замолчи" || low == "мартышка замолчи" || low == "мартышка стоп" {
         speak_stop.store(true, Ordering::Relaxed);
         let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
         return Some("Молчу!".into());
     }
+    if low == "!тише" || low == "!муть" || low == "!молчи" {
+        MUTED_LISTEN.store(true, Ordering::Relaxed);
+        speak_stop.store(true, Ordering::Relaxed);
+        let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
+        return Some("Тихий режим включён — слушаю, но не отвечаю голосом, пока не напишешь !слушай.".into());
+    }
+    if low == "!слушай" || low == "!говори" {
+        MUTED_LISTEN.store(false, Ordering::Relaxed);
+        return Some("Снова на связи и отвечаю голосом!".into());
+    }
+    if low == "!кто" {
+        let u = USERS_LIST.lock().clone();
+        return Some(if u.is_empty() {
+            "В войсе сейчас никого нет.".into()
+        } else {
+            format!("Сейчас в войсе ({}): {}", u.len(), u.join(", "))
+        });
+    }
+    if low == "!сброс" {
+        history.lock().clear();
+        return Some("Контекст текущей беседы очищен (долгая память сохранена).".into());
+    }
+    if low == "!баланс" {
+        let (ds, fs) = tokio::join!(deepseek::balance(), fish::credits());
+        return Some(format!("Баланс — DeepSeek: {ds} · Fish Audio: {fs}"));
+    }
     if low == "!статус" {
         let s = config::get();
+        let u = USERS_LIST.lock().clone();
         return Some(format!(
-            "На связи 24/7 (Rust-бот). В войсе: {}. Мозг: {}. Озвучка: {}. Канал: {channel}.",
-            if in_voice.load(Ordering::Relaxed) { "да" } else { "нет" },
+            "На связи ({}). В войсе: {} ({}). Тихий режим: {}. Мозг: {}. Озвучка: {}. Канал: #{}.",
+            fmt_uptime(uptime_secs()),
+            if IN_VOICE.load(Ordering::Relaxed) { "да" } else { "нет" },
+            u.len(),
+            if MUTED_LISTEN.load(Ordering::Relaxed) { "да" } else { "нет" },
             s.govorilka_model,
-            if s.govorilka_fish_model.is_empty() { &s.fish_model } else { &s.govorilka_fish_model }
+            if s.govorilka_fish_model.is_empty() { &s.fish_model } else { &s.govorilka_fish_model },
+            channel
         ));
+    }
+    if let Some(rest) = trimmed.strip_prefix("!скажи ").or_else(|| trimmed.strip_prefix("!Скажи ")) {
+        let phrase = rest.trim().to_string();
+        if !phrase.is_empty() {
+            speak_in_voice(phrase);
+            return Some("Озвучиваю в войс!".into());
+        }
+    }
+    if let Some(rest) = trimmed.strip_prefix("!напиши ").or_else(|| trimmed.strip_prefix("!Напиши ")) {
+        let msg = rest.trim().to_string();
+        if !msg.is_empty() {
+            return Some(msg);
+        }
+    }
+    if let Some(rest) = trimmed
+        .strip_prefix("!тема ")
+        .or_else(|| trimmed.strip_prefix("!дебаты "))
+        .or_else(|| trimmed.strip_prefix("!Тема "))
+    {
+        let topic = rest.trim().to_string();
+        if !topic.is_empty() {
+            start_topic(topic.clone(), false);
+            return Some(format!("Вкидываю тему «{topic}» в войс!"));
+        }
+    }
+    if low == "!морни" || low.starts_with("!морни ") || low.contains("поговори с морни") || low.contains("пообщайся с морни") {
+        *morni_until.lock() = Some(Instant::now() + Duration::from_secs(240));
+        let topic = trimmed.strip_prefix("!морни").or_else(|| trimmed.strip_prefix("!Морни")).unwrap_or("").trim();
+        if !topic.is_empty() {
+            start_topic(topic.to_string(), true);
+            return Some(format!("Включаю диалог с Морни на тему «{topic}»!"));
+        }
+        return Some("Окей, режим разговора с Морни включён на 4 минуты!".into());
     }
     if let Some(rest) = low.strip_prefix("!мозг ").or_else(|| low.strip_prefix("мартышка поставь модель ")) {
         let m = if rest.contains("pro") { deepseek::PRO } else { deepseek::FLASH };
@@ -213,6 +552,19 @@ async fn handle_owner_chat_cmd(
         mp.insert("GOVORILKA_MODEL".into(), json!(m));
         let _ = config::patch(mp);
         return Some(format!("Мозг в Говорилке теперь: {m}"));
+    }
+    if let Some(rest) = low.strip_prefix("!движок ") {
+        let fm = if rest.contains("drama") || rest.contains("beta") {
+            "s2-pro-beta"
+        } else if rest.contains("pro") && !rest.contains("free") {
+            "s2-pro"
+        } else {
+            "s2.1-pro-free"
+        };
+        let mut mp = Map::new();
+        mp.insert("GOVORILKA_FISH_MODEL".into(), json!(fm));
+        let _ = config::patch(mp);
+        return Some(format!("Движок озвучки в Говорилке теперь: {fm}"));
     }
     if let Some(rest) = low.strip_prefix("!голос ").or_else(|| low.strip_prefix("мартышка смени голос на ")) {
         let q = rest.trim();
@@ -229,9 +581,52 @@ async fn handle_owner_chat_cmd(
         }
         return Some(format!("Не нашла голос «{q}» в каталоге."));
     }
-    if low.contains("поговори с морни") || low.contains("пообщайся с морни") {
-        *morni_until.lock() = Some(Instant::now() + Duration::from_secs(240));
-        return Some("Окей, щас поговорю с Морни!".into());
+    if let Some(rest) = trimmed.strip_prefix("!память ").or_else(|| trimmed.strip_prefix("!Память ")) {
+        let who = rest.trim();
+        let norm = longmem::norm(who);
+        let people = longmem::load_people();
+        if let Some(p) = people.get(&norm) {
+            let facts = if p.facts.is_empty() {
+                "фактов пока нет".to_string()
+            } else {
+                p.facts.iter().take(6).cloned().collect::<Vec<_>>().join("; ")
+            };
+            return Some(format!("Про «{norm}» (злость {}/5, реплик {}): {facts}", longmem::anger(&norm), p.count));
+        }
+        return Some(format!("Про «{who}» пока ничего не записано."));
+    }
+    if let Some(rest) = trimmed.strip_prefix("!запомни ").or_else(|| trimmed.strip_prefix("!Запомни ")) {
+        if let Some((who, fact)) = rest.split_once('|') {
+            let w = who.trim();
+            let f = fact.trim();
+            if !w.is_empty() && !f.is_empty() {
+                longmem::remember_about(w, f);
+                return Some(format!("Запомнила о «{}»: {f}", longmem::norm(w)));
+            }
+        }
+        return Some("Формат: !запомни имя | факт".into());
+    }
+    if let Some(rest) = trimmed.strip_prefix("!забудь ").or_else(|| trimmed.strip_prefix("!Забудь ")) {
+        if let Some((who, fact)) = rest.split_once('|') {
+            let w = who.trim();
+            let f = fact.trim();
+            if !w.is_empty() && !f.is_empty() {
+                longmem::forget_about(w, f);
+                return Some(format!("Забыла о «{}»: {f}", longmem::norm(w)));
+            }
+        }
+        return Some("Формат: !забудь имя | факт".into());
+    }
+    if low == "!успокойся" || low.starts_with("!успокойся ") {
+        let who = trimmed.strip_prefix("!успокойся").or_else(|| trimmed.strip_prefix("!Успокойся")).unwrap_or("").trim();
+        if who.is_empty() {
+            for (name, _) in longmem::load_people() {
+                longmem::set_anger(&name, 0);
+            }
+            return Some("Всё, остыла — злость на всех обнулена.".into());
+        }
+        longmem::set_anger(who, 0);
+        return Some(format!("Остыла, злость на «{}» теперь 0/5.", longmem::norm(who)));
     }
     None
 }
@@ -243,9 +638,11 @@ struct SpeakerBuf {
 }
 
 pub async fn run_forever(stop_all: Arc<AtomicBool>) {
-    RUNNING.store(true, Ordering::Relaxed);
+    if RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
     *STATUS_TXT.lock() = "Подключаюсь к Говорилке…".into();
-    log_line("система", "Запуск прямого Rust-бота Говорилки (24/7)");
+    log_line("система", "Запуск прямого бота Говорилки (24/7)");
     while !stop_all.load(Ordering::Relaxed) {
         let s = config::get();
         let url = s.govorilka_bot_url.trim().to_string();
@@ -263,12 +660,17 @@ pub async fn run_forever(stop_all: Arc<AtomicBool>) {
         *ACTIVE_TX.lock() = None;
         *ACTIVE_SPEAK_STOP.lock() = None;
         *ACTIVE_MORNI_UNTIL.lock() = None;
+        *ACTIVE_HISTORY.lock() = None;
+        *CONNECTED_AT.lock() = None;
+        USERS_LIST.lock().clear();
+        IN_VOICE.store(false, Ordering::Relaxed);
         if !stop_all.load(Ordering::Relaxed) {
             tokio::time::sleep(Duration::from_secs(3)).await;
         }
     }
     RUNNING.store(false, Ordering::Relaxed);
     *STATUS_TXT.lock() = "Отключена".into();
+    write_live_state(false);
     log_line("система", "Бот Говорилки остановлен");
 }
 
@@ -293,6 +695,24 @@ fn spawn_utterance(
         }
         log_line("сервер", &format!("[{nick}] {text}"));
 
+        // Голосовая команда выхода из войса — ТОЛЬКО от хозяина sitth / sitthome
+        if longmem::is_owner(&nick)
+            && (LEAVE_VOICE_RX.is_match(&text)
+                || (NAME_RX.is_match(&text) && text.to_lowercase().contains("выйди")))
+        {
+            speak_stop.store(true, Ordering::Relaxed);
+            let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
+            let _ = tx.send(Message::Text(json!({"type": "leave_voice"}).to_string().into()));
+            IN_VOICE.store(false, Ordering::Relaxed);
+            let _ = tx.send(Message::Text(
+                json!({"type": "chat_send", "text": "Вышла с войса по команде брата, остаюсь на связи в чате! Напиши !войс — вернусь.", "channel": "общий"})
+                    .to_string()
+                    .into(),
+            ));
+            log_line("система", &format!("вышла из войса по голосовой команде хозяина ({nick}): «{text}»"));
+            return;
+        }
+
         // Мгновенный стоп
         let words_n = text.split_whitespace().count();
         if STOP_RX.is_match(&text) && (words_n <= 4 || NAME_RX.is_match(&text)) {
@@ -309,6 +729,11 @@ fn spawn_utterance(
                 let drop_n = h.len() - 40;
                 h.drain(0..drop_n);
             }
+        }
+
+        if MUTED_LISTEN.load(Ordering::Relaxed) {
+            longmem::log("говорилка", &nick, &text, "");
+            return;
         }
 
         let is_morni = nick.to_lowercase().contains("морни") || nick.to_lowercase().contains("morni");
@@ -336,25 +761,7 @@ fn spawn_utterance(
         longmem::log("говорилка", &nick, &text, &clean);
         history.lock().push(json!({"role": "assistant", "content": clean.clone()}));
 
-        // Озвучка через Fish Audio (24 кГц PCM s16le) и отправка в шлюз
-        speak_stop.store(false, Ordering::Relaxed);
-        let s = config::get();
-        let vid = if s.govorilka_voice_id.is_empty() { s.voice_id.as_str() } else { s.govorilka_voice_id.as_str() };
-        let fmdl = if s.govorilka_fish_model.is_empty() { s.fish_model.as_str() } else { s.govorilka_fish_model.as_str() };
-        match fish::speak_pcm_bytes(&clean, Some(vid), Some(fmdl), anger).await {
-            Ok(pcm24) => {
-                for chunk in pcm24.chunks(9600) {
-                    if speak_stop.load(Ordering::Relaxed) {
-                        let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
-                        break;
-                    }
-                    if tx.send(Message::Binary(chunk.to_vec().into())).is_err() {
-                        break;
-                    }
-                }
-            }
-            Err(e) => log_line("ошибка", &format!("Fish Audio: {e}")),
-        }
+        stream_tts_to_gateway(&clean, anger, &tx, &speak_stop).await;
     });
 }
 
@@ -363,7 +770,6 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
     let (mut ws_write, mut ws_read) = ws.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
 
-    // Поток отправки в WebSocket
     let write_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if ws_write.send(msg).await.is_err() {
@@ -372,7 +778,6 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
         }
     });
 
-    // 1. Авторизация (24 кГц PCM — прямо в частоте Fish Audio!)
     let nick = config::get().govorilka_nick;
     let _ = tx.send(Message::Text(
         json!({"type": "auth", "token": token, "nick": nick, "sample_rate": fish::SAMPLE_RATE})
@@ -383,14 +788,13 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
     let history: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
     let buffers: Arc<Mutex<HashMap<String, SpeakerBuf>>> = Arc::new(Mutex::new(HashMap::new()));
     let speak_stop = Arc::new(AtomicBool::new(false));
-    let in_voice = Arc::new(AtomicBool::new(false));
     let morni_until: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
 
     *ACTIVE_TX.lock() = Some(tx.clone());
     *ACTIVE_SPEAK_STOP.lock() = Some(speak_stop.clone());
     *ACTIVE_MORNI_UNTIL.lock() = Some(morni_until.clone());
+    *ACTIVE_HISTORY.lock() = Some(history.clone());
 
-    // Фоновый ping каждые 25 с
     let tx_ping = tx.clone();
     let stop_ping = stop_all.clone();
     let ping_task = tokio::spawn(async move {
@@ -402,12 +806,17 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
         }
     });
 
-    // Периодический сброс буферов, если говорящий замолчал > 1.1 с без события speaking:false
     let mut tick = tokio::time::interval(Duration::from_millis(500));
+    let mut hb_ticks: u32 = 0;
 
     while !stop_all.load(Ordering::Relaxed) {
         let frame = tokio::select! {
             _ = tick.tick() => {
+                poll_external_cmds();
+                hb_ticks = hb_ticks.wrapping_add(1);
+                if hb_ticks % 20 == 0 {
+                    write_live_state(true);
+                }
                 let mut ready = Vec::new();
                 {
                     let mut g = buffers.lock();
@@ -438,9 +847,9 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
                 let Ok(ev) = serde_json::from_str::<Value>(&txt) else { continue };
                 match ev.get("type").and_then(Value::as_str).unwrap_or("") {
                     "auth_ok" => {
-                        *STATUS_TXT.lock() = "На сервере напрямую (botgw, 24/7)".into();
+                        *CONNECTED_AT.lock() = Some(Instant::now());
+                        *STATUS_TXT.lock() = "Подключена напрямую к Говорилке".into();
                         log_line("система", "Подключилась напрямую к Говорилке (botgw)!");
-                        // Ставим аватарку-шар
                         let av_path = config::data_dir().join("avatar_gov_96.jpg");
                         if let Ok(bytes) = std::fs::read(&av_path) {
                             if bytes.len() <= 7000 {
@@ -449,7 +858,8 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
                             }
                         }
                         let _ = tx.send(Message::Text(json!({"type": "join_voice"}).to_string().into()));
-                        in_voice.store(true, Ordering::Relaxed);
+                        IN_VOICE.store(true, Ordering::Relaxed);
+                        write_live_state(true);
                     }
                     "error" => {
                         let m = ev.get("message").and_then(Value::as_str).unwrap_or("ошибка");
@@ -458,9 +868,18 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
                     }
                     "room_state" => {
                         if let Some(users) = ev.get("users").and_then(Value::as_array) {
-                            let names: Vec<&str> = users.iter().filter_map(|u| u.get("nick").and_then(Value::as_str)).collect();
-                            *STATUS_TXT.lock() = format!("В войсе напрямую ({}): {}", names.len(), names.join(", "));
+                            let names: Vec<String> = users
+                                .iter()
+                                .filter_map(|u| u.get("nick").and_then(Value::as_str).map(str::to_string))
+                                .collect();
+                            *USERS_LIST.lock() = names.clone();
+                            *STATUS_TXT.lock() = if names.is_empty() {
+                                "На сервере (в комнате пусто)".into()
+                            } else {
+                                format!("В войсе ({}): {}", names.len(), names.join(", "))
+                            };
                             log_line("система", &format!("в войсе (точно): {}", names.join(", ")));
+                            write_live_state(true);
                         }
                     }
                     "speaking" => {
@@ -486,7 +905,7 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
 
                         // Команды управления — ТОЛЬКО от хозяина sitth
                         if longmem::is_owner(&who) {
-                            if let Some(reply) = handle_owner_chat_cmd(&text, &channel, &tx, &speak_stop, &in_voice, &morni_until).await {
+                            if let Some(reply) = handle_owner_chat_cmd(&text, &channel, &tx, &speak_stop, &morni_until, &history).await {
                                 let _ = tx.send(Message::Text(json!({"type": "chat_send", "text": reply, "channel": channel}).to_string().into()));
                                 continue;
                             }
@@ -539,7 +958,6 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
                 });
                 entry.nick = nick;
                 entry.last_at = Instant::now();
-                // Ограничиваем один буфер ~35 с, чтобы не переполнить память при залипшем микрофоне
                 if entry.pcm.len() < 48_000 * 2 * 35 {
                     entry.pcm.extend_from_slice(pcm);
                 }
