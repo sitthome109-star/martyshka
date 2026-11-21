@@ -101,10 +101,23 @@ TOOLS = [
                     "— заменить все). Для нескольких правок в одном файле — несколько вызовов.",
      "input_schema": _schema({"path": S, "old": S, "new": S, "replace_all": {"type": "boolean"}},
                              ["path", "old", "new"])},
+    {"name": "undo_edit", "group": "files",
+     "description": "Откатить последнюю правку файла (write_file или edit_file), вернув его предыдущее содержимое.",
+     "input_schema": _schema({"path": S}, ["path"])},
+    {"name": "project_map", "group": "dev",
+     "description": "Построить карту проекта за 1 шаг: стек (Python/Node/git/тесты), дерево файлов и список "
+                    "классов/функций в каждом файле. Вызывай в начале работы над незнакомым проектом.",
+     "input_schema": _schema({"path": S, "max_files": I, "symbols": {"type": "boolean"}}, [])},
+    {"name": "check_code", "group": "dev",
+     "description": "Проверить проект или файл: синтаксис всех .py, .json, .js и <script> в .html + запустить "
+                    "тесты проекта (unittest / npm test), если они есть. Быстрая самопроверка после правок.",
+     "input_schema": _schema({"path": S, "run_tests": {"type": "boolean"}}, [])},
     {"name": "grep_code", "group": "dev",
      "description": "Искать по содержимому файлов (регулярное выражение) в папке проекта. glob — какие файлы "
-                    "(например *.py, *.{js,ts}). Возвращает файл:строка: текст. Для поиска функций, мест ошибок.",
-     "input_schema": _schema({"pattern": S, "path": S, "glob": S}, ["pattern"])},
+                    "(например *.py, *.{js,ts}), context — сколько строк до/после совпадения показать (0–5), "
+                    "case_sensitive — учитывать регистр. Возвращает файл:строка: текст.",
+     "input_schema": _schema({"pattern": S, "path": S, "glob": S, "context": I,
+                              "case_sensitive": {"type": "boolean"}}, ["pattern"])},
     {"name": "glob_files", "group": "dev",
      "description": "Найти файлы по шаблону пути внутри папки (например **/*.py, src/**/*.tsx).",
      "input_schema": _schema({"pattern": S, "path": S}, ["pattern"])},
@@ -228,14 +241,18 @@ ACTIVITY = {
     "martyshka_action": ("exec", "Делаю"), "remember": ("memory", "Запоминаю"), "memory_search": ("memory", "Вспоминаю"), "learn": ("memory", "Учусь"),
     "make_icon": ("draw", "Делаю иконку"), "update_app": ("exec", "Обновляю Студию"),
     "govorilka": ("exec", "Говорилка"), "grep_code": ("search", "Ищу в коде"), "glob_files": ("search", "Ищу файлы"),
+    "project_map": ("read", "Изучаю проект"), "check_code": ("exec", "Проверяю код"),
+    "undo_edit": ("write", "Откатываю правку"),
     "run_python": ("exec", "Запускаю Python"), "git_command": ("exec", "Git"), "http_request": ("exec", "Запрос"),
     "page_preview": ("look", "Проверяю страницу"), "start_background": ("exec", "Запускаю в фоне"),
     "background_output": ("read", "Смотрю вывод"), "background_stop": ("exec", "Останавливаю"),
 }
 
 
-# ---------- резервные копии своих файлов ----------
+# ---------- резервные копии и быстрый откат ----------
 BACKUP_DIR = config.DATA_DIR / "studio" / "резерв"
+UNDO_DIR = BACKUP_DIR / "undo"
+_UNDO_STACK: dict[str, list[Path]] = {}
 
 
 def _backup_if_own(p: Path) -> str:
@@ -250,6 +267,67 @@ def _backup_if_own(p: Path) -> str:
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(p.read_bytes())
     return f" (копия старой версии: {dest})"
+
+
+def _save_undo(p: Path) -> None:
+    """Сохранить предыдущее содержимое любого файла для мгновенного отката через undo_edit."""
+    if not p.exists() or not p.is_file():
+        return
+    try:
+        if p.stat().st_size > 4_000_000:
+            return
+        UNDO_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = f"{int(time.time() * 1000)}_{p.name}"
+        snap = UNDO_DIR / stamp
+        snap.write_bytes(p.read_bytes())
+        key = str(p.resolve()).lower()
+        stack = _UNDO_STACK.setdefault(key, [])
+        stack.append(snap)
+        if len(stack) > 10:
+            old = stack.pop(0)
+            old.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _quick_syntax_check(p: Path) -> str:
+    """Мгновенная проверка синтаксиса .py и .json сразу после записи/правки."""
+    ext = p.suffix.lower()
+    if ext == ".py":
+        import ast
+        try:
+            ast.parse(p.read_text(encoding="utf-8"), filename=str(p))
+        except SyntaxError as e:
+            return f"\n⚠ ОШИБКА СИНТАКСИСА Python (строка {e.lineno}): {e.msg}. Исправь сразу!"
+    elif ext == ".json":
+        try:
+            json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            return f"\n⚠ ОШИБКА JSON: {e}. Исправь сразу!"
+    return ""
+
+
+def _near_match_hint(text: str, old: str) -> str:
+    """Если old не нашёлся в файле — показать ближайший похожий кусок, чтобы агент не гадал."""
+    import difflib
+    lines = text.splitlines()
+    old_lines = old.splitlines()
+    if not lines or not old_lines:
+        return ""
+    first = old_lines[0].strip()
+    if not first:
+        return ""
+    best_i, best_r = -1, 0.0
+    for i, ln in enumerate(lines):
+        r = difflib.SequenceMatcher(None, first, ln.strip()).ratio()
+        if r > best_r:
+            best_r, best_i = r, i
+    if best_r < 0.55 or best_i < 0:
+        return ""
+    lo = max(0, best_i - 1)
+    hi = min(len(lines), best_i + max(len(old_lines), 3) + 1)
+    snippet = "\n".join(f"{j + 1:>5}  {lines[j]}" for j in range(lo, hi))
+    return f"\nБлижайшее похожее место в файле:\n{snippet}"
 
 
 def label(name: str, args: dict) -> str:
@@ -290,11 +368,18 @@ def permission(name: str, args: dict) -> dict | None:
         return {"question": "Пересобрать «Мартышка.exe», обновить ярлык на рабочем столе"
                             + (" и перезапустить Студию" if args.get("restart") else ""),
                 "scope": "app:studio", "scope_label": "все изменения самой Студии"}
-    if name in ("write_file", "edit_file", "make_icon"):
+    if name in ("write_file", "edit_file", "make_icon", "undo_edit"):
         p = _path(args.get("path") or args.get("out") or "")
         if not _inside_ws(p):
             return {"question": f"Изменить файл вне папки проектов:\n{p}", "scope": f"dir:{p.parent}",
                     "scope_label": f"всё в папке «{p.parent.name or p.parent}»"}
+    if name == "check_code" and args.get("run_tests", True):
+        p = _path(args.get("path") or str(workspace()))
+        if not (config.STUDIO_AUTO_COMMANDS and _inside_ws(p)):
+            # Проверяем только если в папке реально есть тесты (для обычной проверки синтаксиса спрашивать не нужно)
+            if p.is_dir() and ((p / "tests").exists() or any(p.glob("test_*.py")) or (p / "package.json").exists()):
+                return {"question": f"Запустить проверку и тесты проекта:\n{p}", "scope": f"cmd:{p}",
+                        "scope_label": f"все команды в папке «{p.name}»"}
     if name == "run_command":
         cwd = _path(args.get("cwd") or str(workspace()))
         safe = config.STUDIO_AUTO_COMMANDS and _inside_ws(cwd) and not re.search(
@@ -435,23 +520,48 @@ def _run(name: str, args: dict, ctx: dict) -> dict:
     if name == "write_file":
         p = _path(args["path"])
         p.parent.mkdir(parents=True, exist_ok=True)
+        _save_undo(p)
         note = _backup_if_own(p)
         p.write_text(args["content"], encoding="utf-8")
-        return {"text": f"Записано: {p} ({len(args['content'])} символов).{note}", "ok": True, "file": str(p)}
+        syn = _quick_syntax_check(p)
+        return {"text": f"Записано: {p} ({len(args['content'])} символов).{note}{syn}", "ok": not syn, "file": str(p)}
 
     if name == "edit_file":
         p = _path(args["path"])
-        text = p.read_text(encoding="utf-8")
-        n = text.count(args["old"])
+        raw = p.read_bytes().decode("utf-8")
+        crlf = "\r\n" in raw
+        text = raw.replace("\r\n", "\n") if crlf else raw
+        old = (args["old"] or "").replace("\r\n", "\n")
+        new = (args["new"] or "").replace("\r\n", "\n")
+        n = text.count(old)
         if n == 0 or (n > 1 and not args.get("replace_all")):
+            hint = _near_match_hint(text, old) if n == 0 else ""
             return {"text": f"Кусок old найден {n} раз(а), а нужно ровно 1. Прочитай файл и возьми больше "
-                            "соседнего текста (или replace_all=true).", "ok": False}
+                            f"соседнего текста (или replace_all=true).{hint}", "ok": False}
+        _save_undo(p)
         note = _backup_if_own(p)
-        p.write_text(text.replace(args["old"], args["new"]), encoding="utf-8")
-        return {"text": f"Исправлено ({n} место): {p}{note}", "ok": True, "file": str(p)}
+        updated = text.replace(old, new)
+        if crlf:
+            updated = updated.replace("\n", "\r\n")
+        p.write_bytes(updated.encode("utf-8"))
+        syn = _quick_syntax_check(p)
+        return {"text": f"Исправлено ({n} место): {p}{note}{syn}", "ok": not syn, "file": str(p)}
 
-    if name in ("grep_code", "glob_files", "run_python", "git_command", "http_request", "page_preview",
-                "start_background", "background_output", "background_stop", "memory_search"):
+    if name == "undo_edit":
+        p = _path(args["path"])
+        key = str(p.resolve()).lower()
+        stack = _UNDO_STACK.get(key) or []
+        while stack and not stack[-1].exists():
+            stack.pop()
+        if not stack:
+            return {"text": f"Нет сохранённой предыдущей версии для {p}.", "ok": False}
+        snap = stack.pop()
+        p.write_bytes(snap.read_bytes())
+        snap.unlink(missing_ok=True)
+        return {"text": f"Откатила последнюю правку: {p}", "ok": True, "file": str(p)}
+
+    if name in ("project_map", "check_code", "grep_code", "glob_files", "run_python", "git_command", "http_request",
+                "page_preview", "start_background", "background_output", "background_stop", "memory_search"):
         from . import devtools
         return devtools.run(name, args, _path, workspace)
 

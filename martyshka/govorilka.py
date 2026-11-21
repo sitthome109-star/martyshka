@@ -146,6 +146,7 @@ def stop() -> str:
 
 MORNI_NOW_FLAG = BOT_DIR / "начать_с_морни.flag"   # кнопка в окне: «начни разговор с Морни сейчас»
 LEFT_FLAG = BOT_DIR / "ушла.txt"                 # брат сам сказал «уйди с сервера совсем» — сторож не возвращает
+SILENCE_FLAG = BOT_DIR / "замолчи.flag"          # кнопка в окне: «Замолчи» — мгновенно перестать говорить
 
 
 def quit_server() -> str:
@@ -156,6 +157,15 @@ def quit_server() -> str:
         RUN_FLAG.unlink()
         return "Ухожу с сервера совсем."
     return "Меня и так нет на сервере."
+
+
+def silence() -> str:
+    """«Замолчи» (кнопка в окне): мгновенно перестать говорить, не выходя из войса."""
+    BOT_DIR.mkdir(parents=True, exist_ok=True)
+    if is_running():
+        SILENCE_FLAG.write_text("1")
+        return "Замолкаю."
+    return "Меня и так нет в Говорилке."
 
 
 # ---------- настройки, которые можно менять на ходу (из Студии) ----------
@@ -1494,6 +1504,18 @@ def main() -> None:
     threading.Thread(target=mouth.prepare_fillers, daemon=True).start()
     listener = Listener(config.GOVORILKA_LISTEN_DEVICE)
     listener.paused.set()
+
+    def _silence_guard() -> None:                         # кнопка «Замолчи»: срабатывает сразу, даже посреди речи
+        while RUN_FLAG.exists():
+            try:
+                if SILENCE_FLAG.exists():
+                    SILENCE_FLAG.unlink(missing_ok=True)
+                    mouth.stop()
+                    _log("система", "кнопка «Замолчи»: перестала говорить")
+            except Exception:
+                pass
+            time.sleep(0.1)
+    threading.Thread(target=_silence_guard, daemon=True).start()
     _prepare_client()
     client = _launch_client()
     _log("система", f"зашла в Говорилку как «{config.GOVORILKA_NICK}» (голос {fish.voice_name(voice_id())}, "
@@ -2036,6 +2058,7 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
         time.sleep(0.1)
     listener.paused.set()
     yielded = False
+    interrupted = False
     mouth.stopped.clear()
     sw = StopWatcher(mouth, listener)
     try:
@@ -2048,13 +2071,22 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
         t_text = time.time() - t0
         yielded = mouth.wait_yielding(listener)         # режим диалога: перебили — замолкаем, не говорим поверх
     finally:
-        if sw.finish():
-            yielded = False                             # замолчала по «стоп» — уже записано в журнал
+        if sw.finish():                                 # услышала «стоп» — тоже считаем перебиванием
+            interrupted = True
         mouth.stopped.clear()
         mouth.singing = False
         listener.paused.clear()
-    if yielded:
-        _log("система", "замолчала — собеседник заговорил, слушаю его")
+    if yielded or interrupted:
+        # перебили (или сказали «стоп»): полный ответ в историю НЕ пишем — иначе в следующий раз
+        # она договаривала бы тот же вопрос заново. Помечаем, что её оборвали, и обнуляем цепочку.
+        _log("система", "замолчала — перебили, этот ответ не договариваю")
+        history.append({"role": "assistant", "content": "(начала отвечать, но её перебили — замолчала)"})
+        del history[:-60]
+        if who != SERVER:
+            st["last_who"], st["last_who_at"] = who, time.time()
+        st["last_reply_at"] = time.time()
+        st["chain"] = 0
+        return
     # служебные метки: злость, кто говорил, факты о людях
     m = None if speaker else WHO_RE.search(raw)       # имя с экрана точнее догадки мозга
     if m and m.group(1).strip().lower() not in ("кто-то", "неизвестно", "?"):

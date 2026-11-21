@@ -13,6 +13,7 @@ import ctypes
 import json
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -270,7 +271,8 @@ class Api:
         if self._busy:
             return {"ok": False}
         self._chat = agent_loop.Chat(chat_id)
-        return {"ok": True, "id": self._chat.id, "title": self._chat.title, "display": self._chat.display}
+        return {"ok": True, "id": self._chat.id, "title": self._chat.title, "display": self._chat.display,
+                "project": self._chat.project}
 
     def delete_chat(self, chat_id: str) -> dict:
         if self._busy and chat_id == self._chat.id:
@@ -280,16 +282,63 @@ class Api:
             self._chat = agent_loop.Chat()
         return {"ok": True}
 
-    def send(self, text: str, mode: str = "auto") -> dict:
-        text = (text or "").strip()
-        if not text or self._busy:
+    def save_pasted_image(self, data_url: str) -> dict:
+        """Сохранить вставленный из буфера (Ctrl+V) скриншот в data/studio/uploads/."""
+        import base64
+        if not data_url or "," not in data_url:
             return {"ok": False}
+        hdr, b64 = data_url.split(",", 1)
+        ext = ".jpg" if "jpeg" in hdr else ".webp" if "webp" in hdr else ".png"
+        up_dir = config.DATA_DIR / "studio" / "uploads"
+        up_dir.mkdir(parents=True, exist_ok=True)
+        p = up_dir / f"shot_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:4]}{ext}"
+        try:
+            p.write_bytes(base64.b64decode(b64))
+            return {"ok": True, "path": str(p), "name": p.name}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def rollback_task(self, task_id: str) -> dict:
+        return agent_loop.rollback_task(task_id)
+
+    def projects_list(self) -> dict:
+        ws = tools.workspace()
+        items = []
+        try:
+            for p in sorted((d for d in ws.iterdir() if d.is_dir()), key=lambda d: d.stat().st_mtime, reverse=True)[:30]:
+                items.append({"name": p.name, "path": str(p)})
+        except Exception:
+            pass
+        return {"current": self._chat.project, "items": items}
+
+    def set_project(self, path: str) -> dict:
+        self._chat.project = (path or "").strip()
+        if self._chat.history:
+            self._chat.save()
+        return {"ok": True, "current": self._chat.project}
+
+    def usage_info(self) -> dict:
+        from .. import deepseek
+        u = dict(deepseek.USAGE)
+        inp = int(u.get("in") or 0)
+        cached = int(u.get("cached") or 0)
+        out = int(u.get("out") or 0)
+        pct = round(cached * 100 / inp) if inp else 0
+        return {"requests": int(u.get("requests") or 0), "in": inp, "cached": cached, "out": out, "cache_pct": pct}
+
+    def send(self, text: str, mode: str = "auto", images: list[str] | None = None) -> dict:
+        text = (text or "").strip()
+        imgs = [str(x) for x in (images or []) if x]
+        if (not text and not imgs) or self._busy:
+            return {"ok": False}
+        if not text and imgs:
+            text = "Посмотри на прикреплённую картинку и разберись."
         self._busy = True
         self._stop.clear()
 
         def work():
             try:
-                self._chat.run(text, mode, self._emit, self._ask, self._stop.is_set)
+                self._chat.run(text, mode, self._emit, self._ask, self._stop.is_set, images=imgs)
             except Exception as e:
                 self._emit({"type": "error", "text": f"Сбой: {type(e).__name__}: {e}"})
                 self._emit({"type": "done"})
@@ -435,7 +484,7 @@ class Api:
 
     # ---------- память ----------
     def memory_info(self) -> dict:
-        from .. import longmem
+        from .. import growth, longmem
         from ..memory import Memory
         people = []
         for name, p in sorted(longmem.people().items(), key=lambda kv: kv[1].get("последний_раз", ""), reverse=True):
@@ -443,7 +492,39 @@ class Api:
                            "last": (p.get("последний_раз") or "").replace("T", " "), "count": p.get("реплик", 0)})
         days = sorted(longmem.days().items(), reverse=True)
         facts = [("голос", f) for f in Memory().fact_texts()] + [("чат", f) for f in tools.memory_facts()]
-        return {"people": people, "days": days, "facts": facts[::-1]}
+        lessons = sorted(growth.items(), key=lambda it: (int(it.get("подтверждений", 1)), it.get("когда", "")),
+                         reverse=True)
+        return {"people": people, "days": days, "facts": facts[::-1], "lessons": lessons}
+
+    def forget_lesson(self, text: str) -> dict:
+        from .. import growth
+        growth.forget(text)
+        return {"ok": True}
+
+    # ---------- свои команды / сценарии ----------
+    def commands_list(self) -> list:
+        from .. import commands
+        return commands.load()
+
+    def save_command(self, phrase: str, steps_text: str, say: str = "") -> dict:
+        from .. import commands
+        phrase = (phrase or "").strip()
+        steps = [s.strip() for s in re.split(r"[;\n]+", steps_text or "") if s.strip()]
+        if not phrase or not steps:
+            return {"ok": False, "message": "Укажи фразу и хотя бы один шаг."}
+        items = [c for c in commands.load() if c.get("phrase", "").strip().lower() != phrase.lower()]
+        item = {"phrase": phrase, "steps": steps}
+        if (say or "").strip():
+            item["say"] = say.strip()
+        items.append(item)
+        commands.save(items)
+        return {"ok": True, "message": f"Команда «{phrase}» сохранена."}
+
+    def delete_command(self, phrase: str) -> dict:
+        from .. import commands
+        items = [c for c in commands.load() if c.get("phrase", "").strip().lower() != (phrase or "").strip().lower()]
+        commands.save(items)
+        return {"ok": True}
 
     def forget_person_fact(self, name: str, fact: str) -> dict:
         from .. import longmem
@@ -483,6 +564,8 @@ class Api:
             msg = g.start()
         elif action == "leave":
             msg = g.stop()
+        elif action == "silence":
+            msg = g.silence()
         elif action == "quit":
             msg = g.quit_server()
         elif action == "model" and value:

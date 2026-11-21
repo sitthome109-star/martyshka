@@ -27,6 +27,7 @@ FILE = config.DATA_DIR / "память" / "опыт.json"
 MAX_ITEMS = 160
 _lock = threading.RLock()
 _cache: list | None = None
+_cache_mtime: float = -1.0
 STOP = {"это", "что", "как", "для", "его", "она", "они", "брат", "брата", "мартышка", "если", "когда", "надо",
         "нужно", "чтобы", "очень", "тоже", "только", "просто", "так", "уже", "ещё", "еще", "мне", "меня"}
 
@@ -36,22 +37,33 @@ def _words(text: str) -> set[str]:
 
 
 def items() -> list[dict]:
-    global _cache
+    """Вернуть уроки, автоматически подхватывая обновления из других процессов (голос / чат / Говорилка)."""
+    global _cache, _cache_mtime
     with _lock:
-        if _cache is None:
+        try:
+            mt = FILE.stat().st_mtime
+        except OSError:
+            mt = -1.0
+        if _cache is None or mt != _cache_mtime:
             try:
                 _cache = json.loads(FILE.read_text(encoding="utf-8"))
             except Exception:
                 _cache = []
+            _cache_mtime = mt
         return _cache
 
 
 def _save() -> None:
+    global _cache_mtime
     with _lock:
         FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(items(), ensure_ascii=False, indent=1), encoding="utf-8")
         tmp.replace(FILE)
+        try:
+            _cache_mtime = FILE.stat().st_mtime
+        except OSError:
+            pass
 
 
 def add(text: str, source: str = "", kind: str = "") -> bool:

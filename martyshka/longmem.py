@@ -98,19 +98,31 @@ def _feed_text(recs: list[dict], limit: int = 60000) -> str:
 
 # ---------- люди ----------
 _people: dict | None = None
+_people_mtime: float = -1.0
 
 
 def people() -> dict:
-    global _people
+    """Карточки людей — подхватывает свежий файл с диска, если его обновил другой процесс."""
+    global _people, _people_mtime
     with _lock:
-        if _people is None:
+        try:
+            mt = PEOPLE.stat().st_mtime
+        except OSError:
+            mt = -1.0
+        if _people is None or mt != _people_mtime:
             _people = _load(PEOPLE, {})
+            _people_mtime = mt
         return _people
 
 
 def _save_people() -> None:
+    global _people_mtime
     with _lock:
         _save(PEOPLE, people())
+        try:
+            _people_mtime = PEOPLE.stat().st_mtime
+        except OSError:
+            pass
 
 
 def person(name: str) -> dict:

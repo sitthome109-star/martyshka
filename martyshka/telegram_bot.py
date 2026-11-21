@@ -102,11 +102,15 @@ class TelegramBot:
             pass
 
     def download_voice(self, file_id: str) -> bytes | None:
+        data, _ = self.download_file(file_id)
+        return data
+
+    def download_file(self, file_id: str) -> tuple[bytes | None, str]:
         try:
             path = self._call("getFile", file_id=file_id)["result"]["file_path"]
-            return self.http.get(f"https://api.telegram.org/file/bot{self.token}/{path}").content
+            return self.http.get(f"https://api.telegram.org/file/bot{self.token}/{path}").content, path
         except Exception:
-            return None
+            return None, ""
 
     def confirm(self, question: str, timeout: float = 90) -> bool:
         """Опасное дело (выключить комп…): спросить в Telegram и дождаться «да»."""
@@ -203,9 +207,16 @@ class TelegramBot:
         if self.waiting_answer.is_set() and text:
             self.answers.put(text)
             return
+        caption = (msg.get("caption") or "").strip()
         if text:
             self.events.put(("telegram", {"text": text}))
         elif msg.get("voice"):
             self.events.put(("telegram", {"voice": msg["voice"]["file_id"]}))
+        elif msg.get("photo"):
+            self.events.put(("telegram", {"photo": msg["photo"][-1]["file_id"], "text": caption}))
+        elif msg.get("document"):
+            doc = msg["document"]
+            self.events.put(("telegram", {"document": doc["file_id"], "file_name": doc.get("file_name") or "file.bin",
+                                          "text": caption}))
         else:
-            self.send("Я понимаю текст и голосовые. Картинки и файлы пока не умею.")
+            self.send("Я понимаю текст, голосовые, фото и документы.")

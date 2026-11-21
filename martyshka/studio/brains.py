@@ -43,12 +43,16 @@ class DeepSeekBrain:
     @staticmethod
     def _convert(system: str, history: list[dict], with_reasoning: bool) -> list[dict]:
         msgs = [{"role": "system", "content": system}]
-        for m in history:
+        # По спецификации DeepSeek: reasoning_content нужен только внутри текущего хода (после последнего user),
+        # из прошлых завершённых диалогов его передавать не нужно — экономит контекст и убирает ошибки API.
+        last_real_user = max((i for i, m in enumerate(history)
+                              if m.get("role") == "user" and not m.get("hidden")), default=-1)
+        for idx, m in enumerate(history):
             if m["role"] == "user":
                 msgs.append({"role": "user", "content": m.get("text", "")})
             elif m["role"] == "assistant":
                 one: dict = {"role": "assistant", "content": m.get("text", "") or ""}
-                if with_reasoning:
+                if with_reasoning and idx > last_real_user:
                     one["reasoning_content"] = m.get("reasoning", "") or ""
                 calls = m.get("tool_calls") or []
                 if calls:

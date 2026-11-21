@@ -221,6 +221,14 @@ kbd{font:11px Consolas;padding:1px 6px;border-radius:5px;background:rgba(255,255
 .zoom.show{display:flex}.zoom img{max-width:92vw;max-height:92vh;border-radius:12px}
 .toast{position:fixed;left:50%;bottom:110px;transform:translateX(-50%) translateY(20px);background:#222229;border:1px solid var(--line2);padding:10px 16px;border-radius:12px;opacity:0;transition:.25s;z-index:40;pointer-events:none}
 .toast.show{opacity:1;transform:translateX(-50%)}
+.att{display:none;flex-wrap:wrap;gap:8px;max-width:860px;width:100%;margin:0 auto 8px;padding:0 4px}
+.att.show{display:flex}
+.att-chip{display:flex;align-items:center;gap:7px;padding:4px 8px 4px 4px;border-radius:10px;background:rgba(139,108,246,.16);border:1px solid rgba(139,108,246,.45);font-size:12px;color:#e6dcff}
+.att-chip img{width:28px;height:28px;border-radius:6px;object-fit:cover}
+.att-chip button{color:#cfc3ff;font-size:13px;padding:0 3px}.att-chip button:hover{color:#fff}
+.rb-bar{margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rb-btn{height:30px;padding:0 11px;border-radius:8px;background:rgba(255,193,79,.1);border:1px solid rgba(255,193,79,.35);color:#ffdca0;font-size:12.2px;font-weight:600}
+.rb-btn:hover{background:rgba(255,193,79,.2)}.rb-btn:disabled{opacity:.45;cursor:default}
 @media (max-height:720px){.hero h1{font-size:40px}.hero .sub{margin:4px 0 10px}.hero .clock{display:none}}
 @media (max-width:860px){nav.top button span{display:none}.vol{display:none}}
 </style>
@@ -249,21 +257,24 @@ kbd{font:11px Consolas;padding:1px 6px;border-radius:5px;background:rgba(255,255
   </div>
   <div class="bar">
     <button class="chip" id="bChats"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Чаты</button>
-    <label>Модель чата:</label>
+    <label>Модель:</label>
     <select class="sel" id="model">
-      <option value="auto">Авто — сама выбирает: простое Flash, сложное и код Pro</option>
+      <option value="auto">Авто — простое Flash, код Pro</option>
       <option value="flash">DeepSeek Flash — быстрая, видит экран</option>
       <option value="pro">DeepSeek Pro — самая умная, думает глубоко</option>
+    </select>
+    <select class="sel" id="proj" title="Активный проект для этого чата" style="max-width:190px">
+      <option value="">Проект: авто</option>
     </select>
     <button class="accbtn" id="bNew" title="Новый чат"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
   </div>
   <div id="scroll"><div id="thread"></div></div>
-  <div class="composer"><div class="box">
+  <div class="composer"><div class="att" id="att"></div><div class="box">
     <button class="ib" id="bMic" title="Сказать голосом (Ctrl+Shift+Space)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg></button>
-    <button class="ib" id="bFile" title="Прикрепить файл"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg></button>
+    <button class="ib" id="bFile" title="Прикрепить файл или картинку (также Ctrl+V для скриншота)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg></button>
     <button class="ib" id="bSpeak" title="Читать ответы вслух"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg></button>
     <input type="range" class="vol" id="vol" min="0.2" max="2" step="0.05" title="Громкость голоса">
-    <textarea id="input" rows="1" placeholder="Спроси о чём угодно…"></textarea>
+    <textarea id="input" rows="1" placeholder="Спроси о чём угодно… (Ctrl+V — вставить скриншот)"></textarea>
     <button id="send" disabled title="Отправить (Enter)"></button>
   </div></div>
   <div class="hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/></svg><span>или <b>Ctrl+Shift+Space</b> — сказать голосом · <b>Enter</b> — отправить, <b>Shift+Enter</b> — новая строка</span></div>
@@ -303,7 +314,7 @@ kbd{font:11px Consolas;padding:1px 6px;border-radius:5px;background:rgba(255,255
 const $=s=>document.querySelector(s);
 const api=()=>window.pywebview.api;
 const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-const st={chatId:null,busy:false,chats:[],turn:null,speak:false,t0:0,voiceOn:false};
+const st={chatId:null,busy:false,chats:[],turn:null,speak:false,t0:0,voiceOn:false,images:[]};
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),2600);}
 const hhmm=d=>d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
 
@@ -476,7 +487,19 @@ function onEvent(e){ const T=st.turn;
     case 'plan': renderPlan(turn(),e.items); break;
     case 'confirm': openConfirm(e); break;
     case 'error': addError(e.text); break;
-    case 'done': { const T2=st.turn; const text=T2?(T2.seg?T2.segText:T2.ans.innerText):''; finishTurn(T2,(Date.now()-st.t0)/1000); setBusy(false); refreshChats(); refreshBalance();
+    case 'rollback_ready': {
+      const T2=turn(); const bar=document.createElement('div'); bar.className='rb-bar';
+      const files=(e.files||[]).join(', ');
+      bar.innerHTML=`<button class="rb-btn" title="${esc(files)}">↩ Откатить правки (${e.count})</button><small style="color:var(--dim)">${esc(files)}</small>`;
+      const btn=bar.querySelector('button');
+      btn.onclick=async()=>{
+        if(!confirm('Откатить все правки файлов из этой задачи ('+files+')?')) return;
+        btn.disabled=true; const r=await api().rollback_task(e.id);
+        toast((r&&r.message)||'Готово'); if(r&&r.ok) btn.textContent='✓ Откачено'; else btn.disabled=false;
+      };
+      T2.ans.appendChild(bar); break;
+    }
+    case 'done': { const T2=st.turn; const text=T2?(T2.seg?T2.segText:T2.ans.innerText):''; finishTurn(T2,(Date.now()-st.t0)/1000); setBusy(false); refreshChats(); refreshProjects(); refreshBalance();
       if(st.speak && text.trim()) api().speak(text); break; }
     case 'show_tab': show(e.tab==='settings'?'system':(e.tab==='chat'?'home':e.tab)); break;
     case 'voice_state': setVoice(e.on); break;
@@ -499,15 +522,47 @@ document.addEventListener('keydown',e=>{
 
 // ================= ввод =================
 const input=$('#input'), sendBtn=$('#send'); sendBtn.innerHTML=IC.send;
-function autosize(){ input.style.height='auto'; input.style.height=Math.min(input.scrollHeight,window.innerHeight*0.36)+'px'; sendBtn.disabled=!st.busy && !input.value.trim(); }
+function renderAtt(){
+  const box=$('#att'); box.innerHTML='';
+  st.images.forEach((im,idx)=>{
+    const c=document.createElement('div'); c.className='att-chip';
+    c.innerHTML=(im.preview?`<img src="${im.preview}">`:'')+`<span>${esc(im.name)}</span><button title="Убрать">✕</button>`;
+    c.querySelector('button').onclick=()=>{ st.images.splice(idx,1); renderAtt(); autosize(); };
+    box.appendChild(c);
+  });
+  box.classList.toggle('show',st.images.length>0);
+}
+function autosize(){ input.style.height='auto'; input.style.height=Math.min(input.scrollHeight,window.innerHeight*0.36)+'px'; sendBtn.disabled=!st.busy && !input.value.trim() && !st.images.length; }
 input.addEventListener('input',autosize); window.addEventListener('resize',autosize);
+input.addEventListener('paste',e=>{
+  const items=(e.clipboardData&&e.clipboardData.items)||[];
+  for(const it of items){
+    if(it.type && it.type.startsWith('image/')){
+      e.preventDefault();
+      const file=it.getAsFile(); if(!file) return;
+      const fr=new FileReader();
+      fr.onload=async()=>{
+        const r=await api().save_pasted_image(fr.result);
+        if(r&&r.ok){ st.images.push({path:r.path,name:r.name,preview:fr.result}); renderAtt(); autosize(); toast('Скриншот прикреплён'); }
+        else toast('Не вышло вставить картинку');
+      };
+      fr.readAsDataURL(file);
+      return;
+    }
+  }
+});
 input.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); if(!st.busy) send(); } });
 sendBtn.onclick=()=> st.busy ? api().stop() : send();
 function setBusy(b){ st.busy=b; sendBtn.classList.toggle('stop',b); sendBtn.innerHTML=b?IC.stop:IC.send; sendBtn.title=b?'Остановить (Esc)':'Отправить (Enter)'; autosize(); }
 async function send(text){
-  text=(text??input.value).trim(); if(!text||st.busy) return;
-  show('home'); input.value=''; autosize(); addUser(text); st.turn=null; newTurn(); stick=true; down(); setBusy(true); st.t0=Date.now();
-  const r=await api().send(text,'auto'); if(!r||!r.ok){ setBusy(false); addError('Не получилось отправить.'); finishTurn(st.turn); return; }
+  text=(text??input.value).trim();
+  const imgs=st.images.map(x=>x.path);
+  if((!text && !imgs.length)||st.busy) return;
+  const shown=text||(imgs.length?'🖼 Скриншот':'');
+  show('home'); input.value=''; st.images=[]; renderAtt(); autosize();
+  addUser(shown + (text && imgs.length ? `\n[🖼 прикреплено картинок: ${imgs.length}]` : ''));
+  st.turn=null; newTurn(); stick=true; down(); setBusy(true); st.t0=Date.now();
+  const r=await api().send(text,'auto',imgs); if(!r||!r.ok){ setBusy(false); addError('Не получилось отправить.'); finishTurn(st.turn); return; }
   st.chatId=r.id;
 }
 document.addEventListener('click',e=>{
@@ -522,7 +577,18 @@ async function dictate(){ const b=$('#bMic'); if(b.classList.contains('rec')){ a
   const r=await api().dictate(); b.classList.remove('rec');
   if(r&&r.text){ input.value=(input.value?input.value+' ':'')+r.text; autosize(); input.focus(); } else toast(r&&r.error?r.error:'Ничего не услышала'); }
 $('#bMic').onclick=dictate;
-$('#bFile').onclick=async()=>{ const r=await api().pick_file(); if(r&&r.path){ input.value=(input.value?input.value+'\n':'')+'Файл: '+r.path; autosize(); input.focus(); } };
+$('#bFile').onclick=async()=>{
+  const r=await api().pick_file();
+  if(!r||!r.path) return;
+  if(/\.(png|jpe?g|webp|bmp|gif)$/i.test(r.path)){
+    const name=r.path.split(/[\\/]/).pop();
+    st.images.push({path:r.path,name:name,preview:''});
+    renderAtt(); autosize(); toast('Картинка прикреплена: '+name);
+  } else {
+    input.value=(input.value?input.value+'\n':'')+'Файл: '+r.path; autosize();
+  }
+  input.focus();
+};
 $('#bSpeak').onclick=()=>{ st.speak=!st.speak; $('#bSpeak').classList.toggle('on',st.speak); api().save_settings({CHAT_SPEAK:st.speak}); toast(st.speak?'Буду читать ответы вслух':'Читать вслух не буду'); if(!st.speak) api().stop_speak(); };
 $('#vol').oninput=()=>{ clearTimeout($('#vol')._t); $('#vol')._t=setTimeout(()=>api().save_settings({VOICE_VOLUME:parseFloat($('#vol').value)}),400); };
 
@@ -532,6 +598,19 @@ $('#bTalk').onclick=async()=>{ const want=!st.voiceOn; $('#talkText').textConten
   const r=await api().voice_set(want); setVoice(r.voice); toast(r.voice?'Голосовой помощник включён — зови «Мартышка»':'Голосовой помощник выключен'); };
 
 $('#model').onchange=async()=>{ await api().set_brain_mode($('#model').value); toast($('#model').selectedOptions[0].text.split(' — ')[0]); };
+async function refreshProjects(){
+  try{
+    const p=await api().projects_list();
+    const sel=$('#proj'); if(!sel) return;
+    sel.innerHTML='<option value="">Проект: авто</option>'+(p.items||[]).map(x=>`<option value="${esc(x.path)}">📁 ${esc(x.name)}</option>`).join('');
+    if(p.current && ![...sel.options].some(o=>o.value===p.current)){
+      const nm=p.current.split(/[\\/]/).pop()||p.current;
+      sel.innerHTML+=`<option value="${esc(p.current)}">📁 ${esc(nm)}</option>`;
+    }
+    sel.value=p.current||'';
+  }catch(e){}
+}
+$('#proj').onchange=async()=>{ await api().set_project($('#proj').value); toast($('#proj').value?'Проект: '+$('#proj').selectedOptions[0].text:'Проект: авто'); };
 
 // ================= чаты =================
 function openDrawer(){ $('#drawer').classList.add('show'); $('#scrim').classList.add('show'); refreshChats(); setTimeout(()=>$('#chatSearch').focus(),200); }
@@ -551,8 +630,8 @@ function drawChats(){ const q=$('#chatSearch').value.trim().toLowerCase(); const
   if(!box.children.length) box.innerHTML='<div class="grp" style="text-transform:none">Пока пусто</div>'; }
 $('#chatSearch').addEventListener('input',drawChats);
 async function refreshChats(){ st.chats=await api().list_chats(); drawChats(); }
-async function openChat(id){ if(st.busy) return; const r=await api().open_chat(id); if(!r.ok) return; st.chatId=r.id; show('home'); renderDisplay(r.display); drawChats(); }
-async function newChat(){ if(st.busy) return; await api().new_chat(); st.chatId=null; emptyChat(); drawChats(); show('home'); input.focus(); }
+async function openChat(id){ if(st.busy) return; const r=await api().open_chat(id); if(!r.ok) return; st.chatId=r.id; show('home'); renderDisplay(r.display); drawChats(); refreshProjects(); }
+async function newChat(){ if(st.busy) return; await api().new_chat(); st.chatId=null; emptyChat(); drawChats(); refreshProjects(); show('home'); input.focus(); }
 $('#newChat').onclick=()=>{ newChat(); closeDrawer(); }; $('#bNew').onclick=newChat;
 async function refreshBalance(){ try{ const b=await api().balances(); $('#balDs').textContent=b.deepseek; $('#balFish').textContent=b.fish; }catch(e){} }
 
@@ -571,10 +650,46 @@ document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>show(b.dataset
 let dirty={};
 async function settingsPage(sel,title,desc,keys){ const box=$(sel); dirty={};
   const schema=await api().settings_schema(); box.innerHTML=`<h2>${esc(title)}</h2><p class="pd">${esc(desc)}</p>`;
+  if(keys.includes('brain')){
+    try{
+      const u=await api().usage_info();
+      const card=document.createElement('div'); card.className='card';
+      card.innerHTML=`<h4>Расход за эту сессию <span class="pill ${u.cache_pct>=40?'ok':''}">кэш ${u.cache_pct}%</span></h4>`+
+        `<small style="color:var(--muted)">Запросов: <b>${u.requests}</b> · Вход: <b>${u.in.toLocaleString('ru-RU')}</b> ток. (из дешёвого кэша: <b>${u.cached.toLocaleString('ru-RU')}</b>) · Ответы: <b>${u.out.toLocaleString('ru-RU')}</b> ток.</small>`;
+      box.appendChild(card);
+    }catch(e){}
+  }
   for(const k of keys){ const s=schema.sections.find(x=>x.key===k); if(!s) continue;
     if(s.note){ const n=document.createElement('div'); n.className='note'; n.innerHTML=s.note; box.appendChild(n); }
     const sec=document.createElement('div'); sec.className='sec'; sec.innerHTML=`<h3>${esc(s.title)}</h3>${s.desc?`<div class="sd">${esc(s.desc)}</div>`:''}`;
     for(const f of s.fields) sec.appendChild(fieldEl(f)); box.appendChild(sec); }
+  if(keys.includes('system')){
+    const sec=document.createElement('div'); sec.className='sec';
+    sec.innerHTML=`<h3>Мои команды и сценарии</h3><div class="sd">Одна фраза голосом или в Telegram → несколько дел подряд (например: «режим игры» → открой стим; громкость 40).</div><div id="cmdList"></div>`+
+      `<div class="card" style="margin-top:10px"><div style="display:flex;flex-direction:column;gap:8px">`+
+      `<input class="in" id="cmdPhrase" placeholder="Фраза (например: режим игры)">`+
+      `<textarea class="in" id="cmdSteps" style="height:66px" placeholder="Шаги через точку с запятой или с новой строки:\nоткрой стим\nгромкость 40"></textarea>`+
+      `<div style="display:flex;gap:8px"><input class="in" id="cmdSay" style="flex:1" placeholder="Что ответить (необязательно)"><button class="btn pri" id="cmdAdd">Добавить команду</button></div></div></div>`;
+    box.appendChild(sec);
+    const drawCmds=async()=>{
+      const list=await api().commands_list(); const cl=sec.querySelector('#cmdList'); cl.innerHTML='';
+      if(!list.length){ cl.innerHTML='<div style="color:var(--dim);font-size:13px;padding:6px 0">Пока нет своих команд.</div>'; return; }
+      const ul=document.createElement('ul'); ul.className='facts';
+      list.forEach(c=>{
+        const li=document.createElement('li');
+        li.innerHTML=`<span><b>${esc(c.phrase)}</b> → ${esc((c.steps||[]).join('; '))}${c.say?' <i>(«'+esc(c.say)+'»)</i>':''}</span><button title="Удалить">✕</button>`;
+        li.querySelector('button').onclick=async()=>{ await api().delete_command(c.phrase); drawCmds(); toast('Команда удалена'); };
+        ul.appendChild(li);
+      });
+      cl.appendChild(ul);
+    };
+    sec.querySelector('#cmdAdd').onclick=async()=>{
+      const r=await api().save_command(sec.querySelector('#cmdPhrase').value, sec.querySelector('#cmdSteps').value, sec.querySelector('#cmdSay').value);
+      toast((r&&r.message)||'Готово');
+      if(r&&r.ok){ sec.querySelector('#cmdPhrase').value=''; sec.querySelector('#cmdSteps').value=''; sec.querySelector('#cmdSay').value=''; drawCmds(); }
+    };
+    drawCmds();
+  }
   const bar=document.createElement('div'); bar.className='savebar'; bar.innerHTML='<button class="btn pri">Сохранить</button><span class="msg">Сохранено ✓</span>';
   bar.querySelector('button').onclick=saveSettings; box.appendChild(bar); }
 function mark(k,v){ dirty[k]=v; }
@@ -630,7 +745,7 @@ async function renderGov(){ const box=$('#pg');
   const fill=async first=>{ const g=await api().gov_info();
     if(first){ box.innerHTML=`<h2>Говорилка</h2><p class="pd">Мартышка сидит на голосовом сервере отдельным участником «${esc(g.nick)}».</p>
       <div class="sec"><div class="card" style="margin:12px 0"><h4>Статус <span class="pill" id="gst"></span></h4><small id="gstatus" style="color:var(--muted)"></small>
-        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn pri" id="gJoin">Зайти в войс</button><button class="btn" id="gLeave">Выйти с войса</button><button class="btn" id="gMorni">Начать диалог с Морни</button><button class="btn red" id="gQuit">Уйти с сервера совсем</button></div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn pri" id="gJoin">Зайти в войс</button><button class="btn" id="gLeave">Выйти с войса</button><button class="btn red" id="gSilence">Замолчи</button><button class="btn" id="gMorni">Начать диалог с Морни</button><button class="btn red" id="gQuit">Уйти с сервера совсем</button></div>
         <div style="display:flex;gap:8px;margin-top:10px"><input class="in" id="gTopic" style="flex:1" placeholder="Тема спора с Морни: например, «кошки лучше собак»"><button class="btn" id="gDebate">Спор с Морни</button></div>
         ${g.cable?'':'<div class="note" style="margin:12px 0 0">Нужен виртуальный кабель <b>VB-CABLE</b>.</div>'}</div>
         <div class="field"><div class="lab"><b>Мозг в войсе</b><small>Flash отвечает быстрее, Pro — умнее.</small></div><div class="ctl"><select class="in" id="gModel"><option value="deepseek-flash">DeepSeek Flash</option><option value="deepseek-v4-pro">DeepSeek Pro</option></select></div></div>
@@ -650,6 +765,7 @@ async function renderGov(){ const box=$('#pg');
       $('#gJoin').onclick=async()=>{ toast((await api().gov_action('join')).message); fill(); };
       $('#gDebate').onclick=async()=>{ toast((await api().gov_action('debate',$('#gTopic').value)).message); setTimeout(()=>fill(),5000); };
       $('#gMorni').onclick=async()=>{ toast((await api().gov_action('morni')).message); setTimeout(()=>fill(),4000); };
+      $('#gSilence').onclick=async()=>{ toast((await api().gov_action('silence')).message); };
       $('#gLeave').onclick=async()=>{ toast((await api().gov_action('leave')).message); fill(); };
       $('#gQuit').onclick=async()=>{ if(!confirm('Мартышка уйдёт с сервера совсем и не вернётся сама. Точно?')) return; toast((await api().gov_action('quit')).message); fill(); };
       const vc=document.createElement('div'); $('#gVoice').appendChild(vc); voicePicker(vc,{key:'GOVORILKA_VOICE_ID',value:g.voice,instant:true}); }
@@ -658,7 +774,7 @@ async function renderGov(){ const box=$('#pg');
   await fill(true); pageTimer=setInterval(()=>fill(false),4000); }
 
 async function renderMemory(tab){ tab=tab||'people'; const box=$('#pm'); const m=await api().memory_info();
-  box.innerHTML=`<h2>Память</h2><p class="pd">Мартышка помнит всё: голос, чат, Говорилку и Telegram.</p><div class="subtabs">${[['people','Люди'],['days','Дни'],['facts','Факты']].map(([k,n])=>`<button data-t="${k}" class="${k===tab?'on':''}">${n}</button>`).join('')}</div><div class="sec" id="mbody"></div>`;
+  box.innerHTML=`<h2>Память</h2><p class="pd">Мартышка помнит всё: голос, чат, Говорилку и Telegram.</p><div class="subtabs">${[['people','Люди'],['days','Дни'],['facts','Факты'],['lessons','Мой опыт']].map(([k,n])=>`<button data-t="${k}" class="${k===tab?'on':''}">${n}</button>`).join('')}</div><div class="sec" id="mbody"></div>`;
   box.querySelectorAll('.subtabs button').forEach(b=>b.onclick=()=>renderMemory(b.dataset.t)); const body=$('#mbody');
   if(tab==='people'){ if(!m.people.length) body.innerHTML='<p style="color:var(--muted)">Пока никого.</p>';
     m.people.forEach(p=>{ const c=document.createElement('div'); c.className='card';
@@ -669,6 +785,18 @@ async function renderMemory(tab){ tab=tab||'people'; const box=$('#pm'); const m
       const calm=c.querySelector('[data-calm]'); if(calm) calm.onclick=async()=>{ await api().calm_person(p.name); renderMemory('people'); }; body.appendChild(c); }); }
   else if(tab==='days'){ if(!m.days.length) body.innerHTML='<p style="color:var(--muted)">Пересказы дней появятся сами.</p>';
     m.days.forEach(([d,t])=>{ const c=document.createElement('div'); c.className='card'; c.innerHTML='<h4></h4><div class="md"></div>'; c.querySelector('h4').textContent=d; c.querySelector('.md').innerHTML=md(t); body.appendChild(c); }); }
+  else if(tab==='lessons'){
+    const list=m.lessons||[]; const ul=document.createElement('ul'); ul.className='facts'; body.appendChild(ul);
+    if(!list.length) ul.innerHTML='<li style="color:var(--dim)">Опыт копится сам после задач и разговоров.</li>';
+    list.forEach(it=>{
+      const li=document.createElement('li');
+      const meta=[it['где']||'', it['подтверждений']>1?`×${it['подтверждений']}`:'', (it['когда']||'').replace('T',' ')].filter(Boolean).join(' · ');
+      li.innerHTML=`<span><div></div><small style="color:var(--dim)">${esc(meta)}</small></span><button title="Удалить урок">✕</button>`;
+      li.querySelector('span div').textContent=it.text;
+      li.querySelector('button').onclick=async()=>{ await api().forget_lesson(it.text); renderMemory('lessons'); toast('Урок удалён'); };
+      ul.appendChild(li);
+    });
+  }
   else { const ul=document.createElement('ul'); ul.className='facts'; body.appendChild(ul); if(!m.facts.length) ul.innerHTML='<li style="color:var(--dim)">Пока ничего. Скажи «запомни, что…».</li>';
     m.facts.forEach(([src,f])=>{ const li=document.createElement('li'); li.innerHTML='<span></span><button title="Забыть">✕</button>'; li.querySelector('span').textContent=f; li.querySelector('button').onclick=async()=>{ await api().forget_fact(src,f); renderMemory('facts'); }; ul.appendChild(li); }); }
 }
@@ -677,7 +805,7 @@ window.addEventListener('pywebviewready', async()=>{
   const r=await api().init();
   $('#model').value=['auto','flash','pro'].includes(r.brain_mode)?r.brain_mode:'auto';
   st.speak=!!r.chat_speak; $('#bSpeak').classList.toggle('on',st.speak); $('#vol').value=r.volume||1;
-  setVoice(r.voice); emptyChat(); refreshChats(); refreshBalance(); autosize();
+  setVoice(r.voice); emptyChat(); refreshChats(); refreshProjects(); refreshBalance(); autosize();
   setInterval(async()=>{ try{ setVoice((await api().status_dots()).voice); }catch(e){} },5000);
   if(!r.ready) show('brain'); else if(r.tab && r.tab!=='chat') show(r.tab==='settings'?'system':r.tab);
   input.focus();
