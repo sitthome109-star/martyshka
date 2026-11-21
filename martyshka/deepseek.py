@@ -309,14 +309,39 @@ def transcribe(audio, sample_rate: int = 16000) -> str:
         if r.status_code == 200:
             try:
                 data = r.json()
+                text = (data.get("text") or data.get("transcript") or "").strip()
             except Exception:
-                return r.text.strip()
-            return (data.get("text") or data.get("transcript") or "").strip()
+                text = r.text.strip()
+            return _clean_transcript(text)
         last = DeepSeekError(_explain(r.status_code, r.text))
         if r.status_code not in (429, 500, 502, 503, 504):
             break
         time.sleep(1.5)
     raise last  # type: ignore[misc]
+
+
+CJK_RE = re.compile(r"[　-ヿ㐀-鿿가-힯＀-￯]")
+GLUED_RE = re.compile(r"[А-Яа-яЁёA-Za-z]{19,}")
+
+
+def _clean_transcript(text: str) -> str:
+    """Распознавание DeepSeek иногда: 1) на шуме выдаёт китайские иероглифы — это не речь, выкидываем;
+    2) пишет русскую фразу слитно («Чтовсеунасздесьрабочие?») — быстро расставляем пробелы через flash."""
+    if CJK_RE.search(text):
+        text = CJK_RE.sub(" ", text)
+        if len(re.findall(r"[А-Яа-яЁёA-Za-z]", text)) < 3:
+            return ""
+        text = re.sub(r"\s+", " ", text).strip(" 。，、")
+    if GLUED_RE.search(text):
+        try:
+            fixed = ask("Расставь пробелы между словами в распознанной речи. Ничего не меняй, не исправляй и не "
+                        "добавляй — только пробелы (и пробел после знаков препинания). Ответ — только текст.\n\n"
+                        + text, model=FLASH, max_tokens=300, temperature=0)
+            if fixed and fixed.replace(" ", "").lower() == text.replace(" ", "").lower():
+                text = fixed
+        except Exception:
+            pass
+    return text.strip()
 
 
 def balance() -> str:

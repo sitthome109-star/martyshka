@@ -324,7 +324,29 @@ def _prepare_client() -> None:
         Image.open(avatar).convert("RGB").resize((256, 256)).save(dst / "avatar.jpg", quality=90)
 
 
+def _close_orphan_copies() -> None:
+    """Закрыть СВОИ старые копии Говорилки, оставшиеся от прошлых запусков бота (из-за них новая копия сразу
+    закрывалась и бот бесконечно «заходил снова»). Свои копии бот запускает без кавычек в командной строке,
+    копия брата — с кавычками ("...govorilka.exe"): её не трогаем никогда."""
+    exe = str(config.GOVORILKA_EXE).lower()
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                              "Get-CimInstance Win32_Process -Filter \"name='govorilka.exe'\" | "
+                              "ForEach-Object { \"$($_.ProcessId)|$($_.CommandLine)\" }"],
+                             capture_output=True, text=True, timeout=20, creationflags=0x08000000).stdout
+    except Exception:
+        return
+    for line in out.splitlines():
+        pid, _, cmd = line.partition("|")
+        cmd = cmd.strip()
+        if pid.strip().isdigit() and cmd and not cmd.startswith('"') and cmd.lower().startswith(exe):
+            subprocess.run(["taskkill", "/PID", pid.strip(), "/F"], capture_output=True, creationflags=0x08000000)
+            _log("система", f"закрыла свою старую копию Говорилки (pid {pid.strip()})")
+            time.sleep(1.0)
+
+
 def _launch_client() -> subprocess.Popen:
+    _close_orphan_copies()
     env = dict(os.environ, APPDATA=str(APPDATA))
     si = subprocess.STARTUPINFO()
     si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
