@@ -1,15 +1,12 @@
 //! Голос в облаке — Fish Audio API + воспроизведение через cpal (WASAPI) со стабильными русскими ударениями.
 use crate::config;
 use anyhow::{anyhow, Result};
-#[cfg(windows)]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::Client;
 use serde_json::{json, Value};
-#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(windows)]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -111,7 +108,6 @@ pub async fn speak_pcm_bytes(text: &str, voice_id: Option<&str>, model: Option<&
     Ok(resp.bytes().await?.to_vec())
 }
 
-#[cfg(windows)]
 pub async fn speak_pcm(text: &str, voice_id: Option<&str>, model: Option<&str>, anger: i32) -> Result<Vec<f32>> {
     let bytes = speak_pcm_bytes(text, voice_id, model, anger).await?;
     let mut samples = Vec::with_capacity(bytes.len() / 2);
@@ -123,7 +119,6 @@ pub async fn speak_pcm(text: &str, voice_id: Option<&str>, model: Option<&str>, 
 }
 
 /// Проиграть PCM 24 кГц через устройство вывода по умолчанию с поддержкой мгновенного стопа.
-#[cfg(windows)]
 pub fn play_pcm_blocking(samples: Vec<f32>, volume: f32, stop: Arc<AtomicBool>) -> Result<()> {
     if samples.is_empty() {
         return Ok(());

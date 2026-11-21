@@ -8,6 +8,7 @@ description = "Мартышка — личный ИИ-помощник, аген
 anyhow = "1.0"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
+cpal = "0.15"
 futures-util = "0.3"
 globset = "0.4"
 once_cell = "1.20"
@@ -24,7 +25,6 @@ walkdir = "2.5"
 urlencoding = "2.1"
 
 [target.'cfg(windows)'.dependencies]
-cpal = "0.15"
 tao = "0.30"
 wry = "0.47"
 
