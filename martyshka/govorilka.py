@@ -499,8 +499,13 @@ def _find_leave_button(img):
 OCR_SCRIPT = config.PROJECT_DIR / "tools" / "ocr.ps1"
 
 
-def _voice_rows(img) -> tuple[list[tuple[int, bool]], int]:
-    """Строки списка голосовой комнаты (левая колонка): [(y центра строки, говорит ли)], верх списка."""
+def _is_purple(r, g, b):
+    """Фиолетовая подсветка говорящего в Говорилке (и на буквах ника, и на кольце вокруг аватарки)."""
+    return (b > 125) & (b - g > 35) & (r - g > 15)
+
+
+def _voice_rows(img) -> tuple[list[tuple[int, bool, int]], int]:
+    """Строки списка голосовой комнаты (левая колонка): [(y центра, говорит ли, ширина ника)], верх списка."""
     a = np.asarray(img).astype(int)
     H = a.shape[0]
     leave = _find_leave_button(img)
@@ -517,19 +522,35 @@ def _voice_rows(img) -> tuple[list[tuple[int, bool]], int]:
                 y0, y1 = start + top, ys[i - 1] + top
                 if 6 <= y1 - y0 <= 22:
                     yc = (y0 + y1) // 2
-                    avatar = a[max(0, yc - 12):yc + 12, 14:40]
+                    avatar = a[max(0, yc - 14):min(H, yc + 15), 10:44]
                     if (avatar.max(axis=2) > 60).sum() >= 150:          # слева есть аватарка — это участник
                         nm = a[y0:y1 + 1, 48:225]
-                        r, g, b = nm[..., 0], nm[..., 1], nm[..., 2]
-                        purple = int(((b > 130) & (r > 100) & (g < 90)).sum())
-                        rows.append((yc, purple >= 40))
+                        # ширина текста ника (по яркости, не зависит от цвета) — для мгновенного обнаружения пересортировки
+                        cols = np.where((nm.max(axis=2) > 100).any(axis=0))[0]
+                        width_bucket = int((cols[-1] - cols[0]) // 8) if len(cols) >= 4 else 0
+                        if width_bucket == 0:                           # слишком узкий мусор (1-2 символа вроде «—l»)
+                            start = ys[i] if i < len(ys) else None
+                            continue
+                        p_name = int(_is_purple(nm[..., 0], nm[..., 1], nm[..., 2]).sum())
+                        p_ring = int(_is_purple(avatar[..., 0], avatar[..., 1], avatar[..., 2]).sum())
+                        # Говорит, если подсвечены буквы ника ИЛИ кольцо вокруг аватарки
+                        speaking = (p_name >= 24) or (p_ring >= 35)
+                        rows.append((yc, speaking, width_bucket))
             start = ys[i] if i < len(ys) else None
         elif start is None:
             start = ys[i]
     return rows, top
 
 
-def _ocr_names(img, rows: list[tuple[int, bool]], top: int) -> dict[int, str]:
+def _clean_ocr_name(raw: str) -> str:
+    """Убрать мусор по краям OCR-строки; вернуть пусто, если это не похоже на ник (< 2 букв)."""
+    s = re.sub(r"^[\s\-—–|_•·.,:;!?'\"`~]+|[\s\-—–|_•·.,:;!?'\"`~]+$", "", (raw or "").strip())
+    if len(re.findall(r"[а-яёa-z]", s, re.I)) < 2:
+        return ""
+    return s
+
+
+def _ocr_names(img, rows: list[tuple], top: int) -> dict[int, str]:
     """Прочитать имена строк: {y: имя}. Русский и английский OCR — берём подходящий вариант."""
     import tempfile
     from PIL import Image
@@ -552,11 +573,12 @@ def _ocr_names(img, rows: list[tuple[int, bool]], top: int) -> dict[int, str]:
         if len(parts) == 4 and parts[1].lstrip("-").isdigit():
             found.setdefault(parts[0], []).append((int(parts[1]) // 3 + top, parts[3].strip()))
     res = {}
-    for y, _ in rows:
+    for row in rows:
+        y = row[0]
         def near(lang):
-            c = [t for yy, t in found.get(lang, []) if abs(yy - y) <= 10]
+            c = [t for yy, t in found.get(lang, []) if abs(yy - y) <= 11]
             return c[0] if c else ""
-        ru, en = near("ru"), near("en-US")
+        ru, en = _clean_ocr_name(near("ru")), _clean_ocr_name(near("en-US"))
         name = ru if re.search(r"[а-яё]", ru, re.I) else (en or ru)
         if name:
             res[y] = _known_name(name)
@@ -568,32 +590,48 @@ def _known_name(name: str) -> str:
     import difflib
     from . import longmem
     try:
-        known = list(longmem.people().keys())
+        known = [k for k in longmem.people().keys() if len(k) >= 2]
     except Exception:
         known = []
-    m = difflib.get_close_matches(name, known, n=1, cutoff=0.85)
-    return m[0] if m else name
+    # без учёта регистра, чтобы "enbulih" / "Sitthome" точно сходились со знакомыми никами
+    low_map = {k.lower(): k for k in known}
+    if name.lower() in low_map:
+        return low_map[name.lower()]
+    m = difflib.get_close_matches(name.lower(), list(low_map.keys()), n=1, cutoff=0.80)
+    return low_map[m[0]] if m else name
 
 
 class SpeakerWatch:
     """Следит за подсветкой говорящих в своём окне Говорилки. who(t0, t1) — кто говорил в это время."""
 
+    ABSENT_GRACE = 4.0     # с: человек считается ушедшим только если его нет на снимках >= 4 с подряд
+
     def __init__(self, get_pid):
         self.get_pid = get_pid
         self.timeline: collections.deque = collections.deque(maxlen=3000)   # (время, {имена говорящих})
-        self.present: list[str] = []                                         # кто в голосовой комнате
+        self.present: list[str] = []                                         # устойчивый список: кто в комнате
         self.in_room = False                                                 # Мартышка в голосе и список прочитан
-        self._sig, self._names = None, {}
+        self._sig, self._names_by_y = None, {}                               # {y: имя}
         self._ocr_busy, self._ocr_at = False, 0.0
         self.last_overlap: list[str] = []
         self._appeared: dict[str, float] = {}
-        self._last_seen_sig, self._sig_at = None, 0.0     # когда человек появился в комнате (вход подсвечивается — не речь)
+        self._last_seen_person: dict[str, float] = {}                        # когда последний раз видели человека
+        self._last_seen_sig, self._sig_at = None, 0.0
         threading.Thread(target=self._loop, daemon=True).start()
 
     @staticmethod
     def _me(name: str) -> bool:
         n = name.lower()
         return n.startswith("мартышк") or n == config.GOVORILKA_NICK.lower()
+
+    def _name_for_y(self, y: int) -> str:
+        """Найти имя строки по ближайшей координате y (±11 px) — не ломается от сдвига индексов."""
+        best_n, best_d = "", 12
+        for ny, n in self._names_by_y.items():
+            d = abs(ny - y)
+            if d < best_d:
+                best_n, best_d = n, d
+        return best_n
 
     def _loop(self) -> None:
         h, h_pid = None, 0
@@ -611,22 +649,24 @@ class SpeakerWatch:
                     self.present, self.in_room = [], False
                     time.sleep(1.0)
                     continue
-                # состав комнаты = сколько строк и где они (аватарки при разговоре анимируются — их не учитываем,
-                # иначе имена перечитывались бы каждую секунду и в это время Мартышка не видела, кто говорит).
-                # Имена читаем В ФОНЕ, только когда строки поменялись (+ раз в 90 с на случай, если люди поменялись
-                # местами) — слежка за подсветкой при этом не останавливается.
-                sig = tuple(round((y - top) / 23) for y, _ in rows)
+                # Подпись списка = позиции строк + ширина каждого ника: если люди поменялись местами,
+                # ширина изменится и имена перечитаются СРАЗУ, а не через 90 секунд.
+                sig = tuple((round((y - top) / 23), wb) for y, _, wb in rows)
                 if sig != self._last_seen_sig:
                     self._last_seen_sig, self._sig_at = sig, time.time()
-                if (sig != self._sig or time.time() - self._ocr_at > 90) and not self._ocr_busy:
+                if (sig != self._sig or time.time() - self._ocr_at > 25) and not self._ocr_busy:
                     self._ocr_busy, self._ocr_at = True, time.time()
                     threading.Thread(target=self._read_names, args=(img, rows, top, sig), daemon=True).start()
-                if self._sig == sig:
-                    names = self._names
+                if self._names_by_y:
                     now = time.time()
-                    talking = {names[i] for i, (_, on) in enumerate(rows) if on and i in names
-                               and now - self._appeared.get(names[i], 0.0) > JOIN_GRACE}
-                    self.timeline.append((time.time(), frozenset(n for n in talking if not self._me(n))))
+                    talking = set()
+                    for y, on, _ in rows:
+                        if not on:
+                            continue
+                        n = self._name_for_y(y)
+                        if n and now - self._appeared.get(n, 0.0) > JOIN_GRACE:
+                            talking.add(n)
+                    self.timeline.append((now, frozenset(n for n in talking if not self._me(n))))
             except Exception as e:
                 _log("ошибка", f"кто говорит: {type(e).__name__}: {e}")
                 time.sleep(3)
@@ -635,19 +675,25 @@ class SpeakerWatch:
     def _read_names(self, img, rows, top, sig) -> None:
         try:
             by_y = _ocr_names(img, rows, top)
-            if len(by_y) == len(rows):
-                names = {i: by_y[y] for i, (y, _) in enumerate(rows)}
-                changed = sorted(names.values()) != sorted(self._names.values())
-                first = not self._names
-                for n in set(names.values()) - set(self._names.values()):
-                    # только что зашёл: Говорилка на пару секунд подсвечивает его строку — это не речь.
-                    # Время входа — момент снимка, когда строк стало больше (а не конец чтения имён)
-                    self._appeared[n] = 0.0 if first else self._sig_at
-                self._names, self._sig = names, sig
-                self.present = [n for n in names.values() if not self._me(n)]
+            if by_y:
+                now = time.time()
+                prev_set = set(self.present)
+                first = not self._names_by_y
+                for n in by_y.values():
+                    if not self._me(n):
+                        if n not in self._last_seen_person:
+                            self._appeared[n] = 0.0 if first else self._sig_at
+                        self._last_seen_person[n] = now
+                # Устойчивый состав комнаты: держим человека ещё ABSENT_GRACE сек, если 1 кадр моргнул
+                stable = [n for n, ts in self._last_seen_person.items() if now - ts <= self.ABSENT_GRACE]
+                for n in list(self._last_seen_person):
+                    if now - self._last_seen_person[n] > self.ABSENT_GRACE:
+                        self._last_seen_person.pop(n, None)
+                self._names_by_y, self._sig = by_y, sig
+                self.present = sorted(stable)
                 self.in_room = True
-                if changed:
-                    _log("система", "в войсе: " + ", ".join(names.values()))
+                if set(stable) != prev_set:
+                    _log("система", "в войсе: " + ", ".join(by_y.values()))
         finally:
             self._ocr_busy = False
 
@@ -670,30 +716,39 @@ class SpeakerWatch:
         return frozenset()
 
     def who(self, t0: float, t1: float) -> str:
-        """Чья фраза (звучала t0…t1). Считаем, какую долю времени фразы светился каждый.
-        Двое светились почти одинаково (говорили одновременно) — не угадываем: пусто, чтобы не испортить память."""
-        samples = [names for t, names in list(self.timeline) if t0 - 0.3 <= t <= t1 + 0.3]
+        """Чья фраза (звучала t0…t1).
+        Взвешиваем кадры: когда человек светится ОДИН — вес 2.0 (надёжно), когда двое вместе — 0.5
+        (часто второй — это чужой микрофон, который ловит колонки). Так соседа с фонящим микрофоном
+        не путаем с реальным говорящим."""
+        samples = [names for t, names in list(self.timeline) if t0 - 0.10 <= t <= t1 + 0.15]
+        if not samples:
+            samples = [names for t, names in list(self.timeline) if t0 - 0.30 <= t <= t1 + 0.30]
         if not samples:
             return ""
-        votes: dict[str, int] = {}
+        score: dict[str, float] = {}
+        raw_hits: dict[str, int] = {}
+        solo_hits: dict[str, int] = {}
         for names in samples:
+            if not names:
+                continue
+            w = 2.0 if len(names) == 1 else 0.5
             for n in names:
-                votes[n] = votes.get(n, 0) + 1
-        if not votes:
+                score[n] = score.get(n, 0.0) + w
+                raw_hits[n] = raw_hits.get(n, 0) + 1
+                if len(names) == 1:
+                    solo_hits[n] = solo_hits.get(n, 0) + 1
+        if not score:
             return ""
-        ranked = sorted(votes.items(), key=lambda kv: -kv[1])
-        best, n_best = ranked[0]
-        if n_best < 2 or n_best < 0.25 * len(samples):
+        ranked = sorted(score.items(), key=lambda kv: -kv[1])
+        best, s_best = ranked[0]
+        if raw_hits[best] < 2 or raw_hits[best] < 0.22 * len(samples):
             return ""
-        if len(ranked) > 1 and ranked[1][1] >= 0.6 * n_best:
-            # светились оба. Часто второй — просто чужой микрофон, который слышит говорящего из колонок
-            # (подсветка горит вместе с ним). Решает, кто светился ОДИН: начал фразу, говорил без второго.
+        if len(ranked) > 1 and ranked[1][1] >= 0.65 * s_best:
             a, b = ranked[0][0], ranked[1][0]
-            solo_a = sum(1 for names in samples if names == {a})
-            solo_b = sum(1 for names in samples if names == {b})
-            if solo_a >= 2 and solo_b <= 0.3 * solo_a:
+            sa, sb = solo_hits.get(a, 0), solo_hits.get(b, 0)
+            if sa >= 2 and sb <= 0.35 * sa:
                 return a
-            if solo_b >= 2 and solo_a <= 0.3 * solo_b:
+            if sb >= 2 and sa <= 0.35 * sb:
                 return b
             self.last_overlap = [a, b]
             return ""
@@ -839,7 +894,7 @@ class Listener:
         import ctypes
         ctypes.windll.ole32.CoInitializeEx(None, 0)     # звук Windows в новом потоке требует COM
         recent = collections.deque(maxlen=5)
-        speech, silence, heard = [], 0.0, False
+        speech, silence, heard, speech_t0 = [], 0.0, False, 0.0
         spk, cand, cand_n = None, None, 0                # кто говорит в этой фразе (по подсветке) и кто сменяет
         with self.mic.recorder(samplerate=SR, channels=1, blocksize=BLOCK) as rec:
             while True:
@@ -857,11 +912,12 @@ class Listener:
                 # пока Мартышка говорит — обычно не слушаем; в режиме диалога слушаем и тогда: если её перебили,
                 # фраза собеседника не должна потеряться (свой голос в эту петлю не попадает — сервер его не возвращает)
                 if self.paused.is_set() and not (not ECHO["heard_self"] and (speaking_now or heard)):
-                    speech, silence, heard = [], 0.0, False
+                    speech, silence, heard, speech_t0 = [], 0.0, False, 0.0
                     continue
                 if speaking_now:
                     if not heard:
                         speech = list(recent)[:-1]       # немножко звука до начала речи
+                        speech_t0 = time.time()          # точное начало речи (без pre-roll, чтобы не цеплять хвост прошлого)
                         spk, cand, cand_n = None, None, 0
                     heard, silence = True, 0.0
                     speech.append(block)
@@ -878,9 +934,9 @@ class Listener:
                                 cut = len(speech) - cand_n
                                 audio = np.concatenate(speech[:cut])
                                 now = time.time()
-                                self.phrases.put((audio, now - len(speech) * BLOCK / SR,
-                                                  now - cand_n * BLOCK / SR))
-                                speech, spk, cand, cand_n = speech[cut:], cur, None, 0
+                                cut_t = now - cand_n * BLOCK / SR
+                                self.phrases.put((audio, speech_t0 or (now - len(speech) * BLOCK / SR), cut_t))
+                                speech, spk, cand, cand_n, speech_t0 = speech[cut:], cur, None, 0, cut_t
                         else:
                             cand, cand_n = None, 0
                 elif heard:
@@ -890,8 +946,9 @@ class Listener:
                         audio = np.concatenate(speech)
                         if len(audio) / SR > 0.6:
                             now = time.time()       # когда звучала фраза — по этому времени узнаём, кто говорил
-                            self.phrases.put((audio, now - len(audio) / SR, now - silence))
-                        speech, silence, heard = [], 0.0, False
+                            t0 = speech_t0 or (now - len(audio) / SR)
+                            self.phrases.put((audio, t0, now - silence))
+                        speech, silence, heard, speech_t0 = [], 0.0, False, 0.0
 
 
 # ---------- голос ----------
@@ -1637,7 +1694,7 @@ def main() -> None:
                             pending = ""
                         pending = f"{pending} {text}".strip()
                         pending_at = time.time()
-                        pending_who = name or pending_who
+                        pending_who = name if name else ("" if watch.last_overlap else pending_who)
                         if spec:                              # человек продолжил — заготовку ответа выбрасываем
                             spec.cancel()
                             spec = None

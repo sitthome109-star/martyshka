@@ -221,5 +221,36 @@ class TestNewStudioAndTelegramFeatures(unittest.TestCase):
         p.unlink(missing_ok=True)
 
 
+    def test_govorilka_speaker_watch_logic(self):
+        from martyshka import govorilka as g
+        self.assertEqual(g._clean_ocr_name("—l"), "")
+        self.assertEqual(g._clean_ocr_name("• -"), "")
+        self.assertEqual(g._clean_ocr_name("sitthome"), "sitthome")
+
+        # Создаём SpeakerWatch без фонового потока
+        w = object.__new__(g.SpeakerWatch)
+        w.timeline = g.collections.deque(maxlen=100)
+        w.last_overlap = []
+        w._names_by_y = {100: "sitthome", 130: "Enbulih"}
+        self.assertEqual(w._name_for_y(103), "sitthome")
+        self.assertEqual(w._name_for_y(127), "Enbulih")
+
+        # sitthome говорит один (4 кадра), потом микрофон Enbulih ловит колонки (3 совместных кадра) → sitthome
+        t = 1000.0
+        for i in range(4):
+            w.timeline.append((t + i * 0.15, frozenset({"sitthome"})))
+        for i in range(4, 7):
+            w.timeline.append((t + i * 0.15, frozenset({"sitthome", "Enbulih"})))
+        self.assertEqual(w.who(t, t + 1.0), "sitthome")
+
+        # Реальное перекрытие: оба светятся только вместе → пусто + last_overlap
+        w.timeline.clear()
+        w.last_overlap = []
+        for i in range(6):
+            w.timeline.append((t + i * 0.15, frozenset({"Морни", "Enbulih"})))
+        self.assertEqual(w.who(t, t + 1.0), "")
+        self.assertEqual(set(w.last_overlap), {"Морни", "Enbulih"})
+
+
 if __name__ == "__main__":
     unittest.main()
