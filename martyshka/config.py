@@ -20,6 +20,9 @@ DEEPSEEK_KEY = ""                     # ключ с platform.deepseek.com — х
 DEEPSEEK_URL = "https://api.deepseek.com"
 # Каким мозгом думать: "auto" — сам выбирает (простое → flash, сложное → pro), "flash" или "pro"
 BRAIN_MODE = "auto"
+# Экономия: кэш-дружелюбный порядок запроса, сжатие старых результатов, при малом балансе «Авто» = только flash
+ECONOMY = True
+ECONOMY_BALANCE = 1.0
 # deepseek-flash — быстрый, видит экран и картинки; deepseek-v4-pro — сильный, для кода и сложного
 MODEL = "deepseek-flash"
 # Студия (чат-агент): насколько глубоко думать сильному мозгу над задачами — "low", "high" или "max"
@@ -52,7 +55,11 @@ FISH_MODEL = "s2.1-pro-free"
 VOICE_ID = ""
 # Голос в Говорилке (пусто — тот же, что у Мартышки)
 GOVORILKA_VOICE_ID = ""
-GOVORILKA_FISH_MODEL = ""          # модель озвучки в Говорилке; пусто — как у голоса (FISH_MODEL)
+GOVORILKA_FISH_MODEL = ""
+# голос под настроение: {драма}, пение и злость (от MOOD_ANGRY_FROM из 5) — Drama 3; в злости — ANGRY_VOICE_ID
+MOOD_VOICE = True
+MOOD_ANGRY_FROM = 3
+ANGRY_VOICE_ID = ""                # пусто — тот же голос, только подача злее          # модель озвучки в Говорилке; пусто — как у голоса (FISH_MODEL)
 
 # Выразительность голоса: 0.5 — ровнее, 0.9 — эмоциональнее
 VOICE_TEMPERATURE = 0.75

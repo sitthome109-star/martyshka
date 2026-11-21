@@ -631,6 +631,7 @@ async function renderGov(){ const box=$('#pg');
     if(first){ box.innerHTML=`<h2>Говорилка</h2><p class="pd">Мартышка сидит на голосовом сервере отдельным участником «${esc(g.nick)}».</p>
       <div class="sec"><div class="card" style="margin:12px 0"><h4>Статус <span class="pill" id="gst"></span></h4><small id="gstatus" style="color:var(--muted)"></small>
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn pri" id="gJoin">Зайти в войс</button><button class="btn" id="gLeave">Выйти с войса</button><button class="btn" id="gMorni">Начать диалог с Морни</button><button class="btn red" id="gQuit">Уйти с сервера совсем</button></div>
+        <div style="display:flex;gap:8px;margin-top:10px"><input class="in" id="gTopic" style="flex:1" placeholder="Тема спора с Морни: например, «кошки лучше собак»"><button class="btn" id="gDebate">Спор с Морни</button></div>
         ${g.cable?'':'<div class="note" style="margin:12px 0 0">Нужен виртуальный кабель <b>VB-CABLE</b>.</div>'}</div>
         <div class="field"><div class="lab"><b>Мозг в войсе</b><small>Flash отвечает быстрее, Pro — умнее.</small></div><div class="ctl"><select class="in" id="gModel"><option value="deepseek-flash">DeepSeek Flash</option><option value="deepseek-v4-pro">DeepSeek Pro</option></select></div></div>
         <div class="field"><div class="lab"><b>Озвучка в войсе</b><small>S2.1 Pro Free — бесплатно. Drama 3 — самая живая подача, но платная (кончатся кредиты — сама вернётся на бесплатную).</small></div><div class="ctl"><select class="in" id="gFish">${g.fish_models.map(([k,n])=>`<option value="${k}" ${k===g.fish_model?'selected':''}>${esc(n)}</option>`).join('')}</select></div></div>
@@ -643,6 +644,7 @@ async function renderGov(){ const box=$('#pg');
       $('#gDialog').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('dialog',ev.target.classList.contains('on'))).message); };
       $('#gAuto').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('autostart',ev.target.classList.contains('on'))).message); };
       $('#gJoin').onclick=async()=>{ toast((await api().gov_action('join')).message); fill(); };
+      $('#gDebate').onclick=async()=>{ toast((await api().gov_action('debate',$('#gTopic').value)).message); setTimeout(()=>fill(),5000); };
       $('#gMorni').onclick=async()=>{ toast((await api().gov_action('morni')).message); setTimeout(()=>fill(),4000); };
       $('#gLeave').onclick=async()=>{ toast((await api().gov_action('leave')).message); fill(); };
       $('#gQuit').onclick=async()=>{ if(!confirm('Мартышка уйдёт с сервера совсем и не вернётся сама. Точно?')) return; toast((await api().gov_action('quit')).message); fill(); };

@@ -101,7 +101,62 @@ def pick(text: str = "", hard: bool | None = None) -> str:
         return PRO
     if hard is None:
         hard = len(text) > 260 or bool(HARD_RE.search(text or ""))
+    if hard and low_balance():
+        return FLASH                               # экономия: денег мало — дорогой Pro только по кнопке
     return PRO if hard else FLASH
+
+
+# ---------- ЭКОНОМИЯ ----------
+# 1) Денег на счёте меньше ECONOMY_BALANCE — «Авто» берёт только дешёвый flash (Pro — если выбран вручную).
+# 2) Кэш DeepSeek: если начало запроса то же, что в прошлый раз, оно стоит ~в 10 раз дешевле. Поэтому то, что
+#    меняется каждый раз (память, время, злость — всё после «=== Сейчас ===»), переносим из начала в конец,
+#    прямо перед последней репликой: характер + вся переписка остаются неизменным началом и берутся из кэша.
+# 3) Старые результаты инструментов (из прошлых задач, до последней просьбы) — коротко, не по 30 000 знаков.
+_bal = {"value": None, "at": 0.0, "busy": False}
+DYNAMIC_MARK = "\n\n=== Сейчас ===\n"
+
+
+def balance_value() -> float | None:
+    """Баланс в долларах/юанях числом (обновляется в фоне раз в 20 минут)."""
+    if time.time() - _bal["at"] > 20 * 60 and not _bal["busy"] and key():
+        _bal["busy"] = True
+
+        def upd():
+            try:
+                r = http().get(base_url() + "/user/balance", headers=_headers(), timeout=15)
+                info = (r.json().get("balance_infos") or [{}])[0]
+                _bal["value"] = float(info.get("total_balance"))
+            except Exception:
+                pass
+            finally:
+                _bal["at"], _bal["busy"] = time.time(), False
+        threading.Thread(target=upd, daemon=True).start()
+    return _bal["value"]
+
+
+def low_balance() -> bool:
+    if not getattr(config, "ECONOMY", True):
+        return False
+    v = balance_value()
+    return v is not None and v < float(getattr(config, "ECONOMY_BALANCE", 1.0))
+
+
+def _cache_friendly(messages: list[dict]) -> list[dict]:
+    if not getattr(config, "ECONOMY", True) or not messages or messages[0].get("role") != "system":
+        return messages
+    first = messages[0].get("content")
+    if not isinstance(first, str) or DYNAMIC_MARK not in first:
+        return messages
+    static, dynamic = first.split(DYNAMIC_MARK, 1)
+    out = [dict(messages[0], content=static)] + list(messages[1:])
+    last_user = max((i for i, m in enumerate(out) if m.get("role") == "user"), default=len(out))
+    out.insert(last_user, {"role": "system", "content": "=== Сейчас (свежее) ===\n" + dynamic})
+    # старые результаты инструментов (до последней просьбы) — коротко
+    for i in range(1, last_user):
+        m = out[i]
+        if m.get("role") == "tool" and isinstance(m.get("content"), str) and len(m["content"]) > 2500:
+            out[i] = dict(m, content=m["content"][:2500] + "\n…(старый результат, обрезан для экономии)")
+    return out
 
 
 # ---------- картинки ----------
@@ -137,6 +192,7 @@ def _payload(messages, model, think, effort, temperature, max_tokens, tools, jso
     model = normalize(model)
     if _has_images(messages):
         model = FLASH                              # картинки видит только flash
+    messages = _cache_friendly(messages)
     p: dict = {"model": model, "messages": messages, "stream": stream}
     if think:
         p["thinking"] = {"type": "enabled"}

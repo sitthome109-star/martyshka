@@ -16,6 +16,11 @@ def _fish_models() -> list:
     from . import fish
     return list(fish.MODELS)
 
+
+def _official_voices() -> list:
+    from . import fish
+    return [(i, f"{t} ({lang.upper()}, {'муж.' if g == 'male' else 'жен.'})") for i, t, lang, g in fish.OFFICIAL]
+
 def _devices(kind: str) -> list[tuple]:
     try:
         import sounddevice as sd
@@ -62,6 +67,11 @@ def schema(extra: dict | None = None) -> dict:
                 "Авто: простое — Flash (быстро и дёшево), сложное и код — Pro (умнее). Это же переключается "
                 "кнопками сверху окна.",
                 options=[("auto", "Авто — сама выбирает"), ("flash", "Всегда Flash"), ("pro", "Всегда Pro")]),
+             _f("ECONOMY", "Экономия", "toggle",
+                "Неизменное начало запроса (характер и переписка) DeepSeek берёт из кэша — примерно в 10 раз "
+                "дешевле; старые длинные результаты агента сжимаются; когда денег мало — «Авто» думает только Flash."),
+             _f("ECONOMY_BALANCE", "«Денег мало» — это меньше (в валюте счёта)", "slider", "",
+                min=0.2, max=5, step=0.1),
          ]},
         {"key": "character", "title": "Характер", "desc": "Как Мартышка общается. Характер нарастающий: как с ней "
                                                           "говорят — так и она.",
@@ -88,6 +98,13 @@ def schema(extra: dict | None = None) -> dict:
                 options=_fish_models()),
              _f("VOICE_VOLUME", "Громкость", "slider", "", min=0.3, max=2.0, step=0.05),
              _f("VOICE_OUTPUT_DEVICE", "Куда выводить звук", "select", "", options=_devices("out")),
+             _f("MOOD_VOICE", "Голос под настроение", "toggle",
+                "Обычные фразы — моделью из настроек выше (обычно бесплатной). Злость, пение и фразы, которые "
+                "Мартышка сама пометит как важные, играет Drama 3 (платно, только эти фразы). Работает и в Говорилке."),
+             _f("MOOD_ANGRY_FROM", "С какой злости включать «злой» голос", "slider",
+                "0 — спокойна, 5 — в ярости.", min=1, max=5, step=1),
+             _f("ANGRY_VOICE_ID", "Голос в злости", "select", "",
+                options=[("", "Тот же голос, только подача злее")] + _official_voices()),
              _f("VOICE_ID", "Голос Мартышки", "voice"),
          ]},
         {"key": "ears", "title": "Уши", "desc": "Имя «Мартышка» слышит маленькая модель прямо на ПК; саму фразу "
@@ -147,7 +164,8 @@ def schema(extra: dict | None = None) -> dict:
 
 NUMERIC = {"TEMPERATURE": float, "VOICE_SPEED": float, "VOICE_TEMPERATURE": float, "VOICE_VOLUME": float,
            "FOLLOWUP_SECONDS": float, "DIALOG_SILENCE": float, "END_OF_SPEECH_SILENCE": float, "SPEECH_THRESHOLD": float,
-           "STUDIO_MAX_STEPS": int, "FACE_SIZE": int}
+           "STUDIO_MAX_STEPS": int, "FACE_SIZE": int, "MOOD_ANGRY_FROM": int,
+           "ECONOMY_BALANCE": float}
 
 
 def save(values: dict) -> list[str]:

@@ -171,7 +171,8 @@ def _reload_settings() -> None:
     except Exception:
         return
     for k in ("GOVORILKA_VOICE_ID", "VOICE_ID", "GOVORILKA_MODEL", "GOVORILKA_FOLLOWUP", "GOVORILKA_MAX_CHAIN",
-              "BRAIN_MODE", "DEEPSEEK_KEY", "FISH_KEY", "FISH_MODEL", "GOVORILKA_DIALOG", "GOVORILKA_FISH_MODEL"):
+              "BRAIN_MODE", "DEEPSEEK_KEY", "FISH_KEY", "FISH_MODEL", "GOVORILKA_DIALOG", "GOVORILKA_FISH_MODEL",
+              "MOOD_VOICE", "MOOD_ANGRY_FROM", "ANGRY_VOICE_ID"):
         if k in saved:
             setattr(config, k, saved[k])
 
@@ -792,6 +793,7 @@ class Mouth:
         self.synth_stats: list[tuple[float, float]] = []      # (секунд звука, секунд синтеза)
         self.fillers: dict = {}
         self._filler_voice = ""
+        self.anger = 0                                       # злость на того, кому отвечает (голос под настроение)
         self.stopped = threading.Event()                     # «замолчи» — кто-то заговорил поверх
         threading.Thread(target=self._synth_loop, daemon=True).start()
         threading.Thread(target=self._play_loop, daemon=True).start()
@@ -803,7 +805,8 @@ class Mouth:
                 if self.stopped.is_set():
                     continue
                 t0 = time.time()
-                audio = self.fish.speak_all(text, voice_id(), temperature=0.75, model=fish_model())
+                said, vid, mdl = self.fish.mood_pick(text, voice_id(), fish_model(), self.anger)
+                audio = self.fish.speak_all(said, vid, temperature=0.75, model=mdl)
                 if len(audio) and not self.stopped.is_set():
                     self.synth_stats.append((len(audio) / self.sr, time.time() - t0))
                     self._audio_q.put(audio)
@@ -907,10 +910,24 @@ class Mouth:
 
 # ---------- мозг ----------
 # Брат просит поболтать с Морни («пообщайся с Морни», «спроси у Морни…», «скажи Морни…»)
-MORNI_TALK_RE = re.compile(r"(пообща|поговор|побол|поспор|спроси|скажи|ответь|расскажи|познаком|позови|обратись)"
+MORNI_TALK_RE = re.compile(r"(пообща|поговор|побол|поспор|спор|дебат|спроси|скажи|ответь|расскажи|познаком|позови|обратись)"
                            r"\w*.{0,25}\bм[оу]рни", re.I)
 MORNI_RE = re.compile(r"\bм[оу]рни\w*", re.I)
 MORNI_MINUTES = 4          # сколько длится разговор с Морни после просьбы
+# ДЕБАТЫ С МОРНИ: «поспорь с Морни о …» голосом или кнопка с темой в окне
+DEBATE_MINUTES = 8
+DEBATE = {"topic": "", "until": 0.0}
+DEBATE_RE = re.compile(r"(?:спор|дебат)\w*.{0,30}?м[оу]рни\w*[,\s]+(?:на тему|о том,? что|о том,? как|о|об|про|насч[её]т)\s+(.{3,120})", re.I)
+
+
+def start_debate(topic: str) -> None:
+    DEBATE["topic"] = topic.strip(" .,!?«»\"")[:120]
+    DEBATE["until"] = time.time() + DEBATE_MINUTES * 60
+    _log("система", f"дебаты с Морни: «{DEBATE['topic']}»")
+
+
+def debate_on() -> bool:
+    return bool(DEBATE["topic"]) and time.time() < DEBATE["until"]
 MORNI_START_EVERY = 6 * 60  # не чаще: сама заводит разговор с Морни, когда в войсе тихо
 SERVER = "кто-то на сервере"   # когда неизвестно, кто говорит
 TONE_RE = re.compile(r"\[\s*ТОН\s*:\s*(\d)\s*\]", re.I)
@@ -948,7 +965,11 @@ def system_prompt(anger: int = 0, with_morni: bool = False, who: str = "", prese
             "{смешок}, {хохочет}, {фальшивый смех}, {вздох}, {тяжёлый вздох}, {фыркает}, {хмыкает}, {цокает}, "
             "{пауза}, {длинная пауза}, {зевает}; отдельные слова — <whisper>…</whisper>, <emphasis>…</emphasis>, "
             "<stress>…</stress>, <soft>…</soft>, <forceful>…</forceful>, <slow>…</slow>, <fast>…</fast>. "
-            "Сколько и когда — решаешь сама.\n"
+            "Сколько и когда — решаешь сама. {драма} в начале фразы — эту фразу сыграет самая живая модель голоса "
+            "(Drama 3, платная) — ставь, когда фраза правда того стоит: крик, слёзы, ярость, сильный смех. "
+            "ПЕНИЕ: попросили спеть или самой захотелось — пой: {поёт, мелодично, весело} и строки; лучше "
+            "сочиняй свои на ходу (про людей на сервере, про момент), чужие песни — максимум пару строк. "
+            "Пение и злость голос и так сыграет живее.\n"
             "СЛУЖЕБНЫЕ МЕТКИ (их не слышат): в САМОМ начале ответа [ТОН: 0..5] — твоя злость на того, кто сейчас "
             "говорил. Как с тобой — так и ты: оскорбили — выше; говорят нормально — ниже; извинились — 0. "
             "Дружеские подколки от оскорблений отличай. Если понятно, кто говорил, — [КТО: имя]. Узнала о ком-то "
@@ -960,6 +981,12 @@ def system_prompt(anger: int = 0, with_morni: bool = False, who: str = "", prese
     if with_morni:
         base += ("СЕЙЧАС ТЫ РАЗГОВАРИВАЕШЬ С МОРНИ: каждая твоя фраза начинается с «Морни,», отвечай на её слова, "
                  "задавай ей вопросы, шути, спорь, держи живой разговор.\n")
+        if debate_on():
+            base += (f"ИДУТ ДЕБАТЫ С МОРНИ, тема: «{DEBATE['topic']}». У тебя своя чёткая позиция (Морни за — ты "
+                     "против, и наоборот; если она уклоняется — дави). Спорь аргументами, примерами, остро и с "
+                     "юмором, лови её на противоречиях, легко не сдавайся. Люди на сервере — зрители: можешь звать "
+                     "их в союзники. Скажут «хватит» или тема исчерпана — подведи итог и объяви, кто, по-твоему, "
+                     "победил.\n")
     try:
         mem = longmem.context(present=present, source="говорилка", today_lines=25, n_days=5)
     except Exception:
@@ -1026,7 +1053,8 @@ def should_answer(text: str, last_reply_at: float, chain: int, with_morni: bool 
     (config.GOVORILKA_FOLLOWUP секунд, не больше GOVORILKA_MAX_CHAIN реплик подряд)."""
     if NAME_RE.search(text):
         return True, 0
-    limit = config.GOVORILKA_MAX_CHAIN * (2 if with_morni else 1)   # с Морни разговор может быть длиннее
+    # с Морни разговор может быть длиннее, а дебаты — ещё длиннее
+    limit = config.GOVORILKA_MAX_CHAIN * (5 if (with_morni and debate_on()) else 2 if with_morni else 1)
     # разговор с Морни (брат сам попросил) — её реплики принимаем без имени
     if with_morni and time.time() - last_reply_at < config.GOVORILKA_FOLLOWUP and chain < limit:
         return True, chain + 1
@@ -1189,12 +1217,23 @@ def main() -> None:
                         pending_who = name or pending_who
                 # кнопка в окне: брат велел начать разговор с Морни прямо сейчас (в любом режиме)
                 if MORNI_NOW_FLAG.exists() and not listener.hearing:
+                    try:
+                        topic = json.loads(MORNI_NOW_FLAG.read_text(encoding="utf-8") or "{}").get("topic", "")
+                    except Exception:
+                        topic = ""
                     MORNI_NOW_FLAG.unlink(missing_ok=True)
                     last_initiative = time.time()
-                    _log("система", "брат попросил начать разговор с Морни")
-                    _respond("(брат попросил: заведи разговор с Морни прямо сейчас — обратись к ней, задай колкий "
-                             "или интересный вопрос, можешь вспомнить что-то из прошлых разговоров)",
-                             mouth, listener, st, initiative=True)
+                    if topic:
+                        start_debate(topic)
+                        _respond(f"(брат устроил дебаты: ты против Морни, тема «{DEBATE['topic']}». Объяви "
+                                 "зрителям на сервере начало спора одной фразой, потом обратись к Морни, займи "
+                                 "свою позицию и брось ей вызов)", mouth, listener, st, initiative=True)
+                        st["morni_until"] = DEBATE["until"]
+                    else:
+                        _log("система", "брат попросил начать разговор с Морни")
+                        _respond("(брат попросил: заведи разговор с Морни прямо сейчас — обратись к ней, задай "
+                                 "колкий или интересный вопрос, можешь вспомнить что-то из прошлых разговоров)",
+                                 mouth, listener, st, initiative=True)
                     continue
                 # сама заводит разговор с Морни, когда в войсе давно тихо (не чаще раза в MORNI_START_EVERY)
                 quiet_for = time.time() - max(listener.last_voice_at, st["last_reply_at"], started_at)
@@ -1290,7 +1329,8 @@ def _respond(text, mouth, listener, st, initiative=False, speaker=""):
         try:
             mouth.first_audio_at = 0.0
             mouth.synth_stats.clear()
-            raw = reply_stream(history, mouth, longmem.anger("Морни"), with_morni=True, who="Морни",
+            mouth.anger = longmem.anger("Морни")
+            raw = reply_stream(history, mouth, mouth.anger, with_morni=True, who="Морни",
                                present=st["present"])
             mouth.wait()
         finally:
@@ -1322,6 +1362,13 @@ def _respond(text, mouth, listener, st, initiative=False, speaker=""):
     if asked_morni:
         st["morni_until"] = time.time() + MORNI_MINUTES * 60    # брат попросил поболтать с Морни
         _log("система", "болтаю с Морни")
+        d = DEBATE_RE.search(text)
+        if d:                                                   # «поспорь с Морни о …» — дебаты на тему
+            start_debate(d.group(1))
+            st["morni_until"] = DEBATE["until"]
+    if not debate_on() and DEBATE["topic"]:
+        _log("система", f"дебаты «{DEBATE['topic']}» закончились")
+        DEBATE["topic"] = ""
     with_morni = time.time() < st["morni_until"]
     ok, st["chain"] = should_answer(text, st["last_reply_at"], st["chain"], with_morni, same_speaker)
     if asked_morni:
@@ -1349,6 +1396,7 @@ def _respond(text, mouth, listener, st, initiative=False, speaker=""):
         mouth.stopped.clear()
         if named and not with_morni:
             mouth.filler(anger)                         # «Ага» сразу, пока мозг думает
+        mouth.anger = anger
         raw = reply_stream(history, mouth, anger, with_morni, who=who, present=st["present"])
         t_text = time.time() - t0
         yielded = mouth.wait_yielding(listener)         # режим диалога: перебили — замолкаем, не говорим поверх

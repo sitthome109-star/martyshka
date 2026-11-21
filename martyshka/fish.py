@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from typing import Iterator
@@ -150,6 +151,28 @@ def speak(text: str, voice_id: str | None = None, speed: float | None = None, te
             if attempt == 2:
                 raise FishError(f"Нет связи с Fish Audio: {e}")
             time.sleep(1.0)
+
+
+# ---------- голос под настроение ----------
+# Мартышка сама решает подачу: {драма} перед фразой — эту фразу играет Drama 3; пение ({поёт…}) — тоже Drama;
+# в злости (от MOOD_ANGRY_FROM) — Drama 3 и «злой» голос (ANGRY_VOICE_ID, если задан). Обычные фразы — как в
+# настройках (обычно бесплатная модель), так Drama тратит деньги только там, где она слышна.
+DRAMA_MARK_RE = re.compile(r"\[\s*(драма|drama)\s*\]\s*", re.I)
+SING_RE = re.compile(r"\[[^\]]*(по[её]т|пою|напева|песн|мелоди|sing|hum)[^\]]*\]", re.I)
+
+
+def mood_pick(text: str, voice_id: str, model: str | None, anger: int = 0) -> tuple[str, str, str | None]:
+    """Подобрать голос и модель для одной фразы. Возвращает (текст без метки, голос, модель)."""
+    marked = bool(DRAMA_MARK_RE.search(text))
+    text = DRAMA_MARK_RE.sub("", text).strip()
+    if not getattr(config, "MOOD_VOICE", True):
+        return text, voice_id, model
+    angry = anger >= int(getattr(config, "MOOD_ANGRY_FROM", 3))
+    if angry and getattr(config, "ANGRY_VOICE_ID", ""):
+        voice_id = config.ANGRY_VOICE_ID
+    if marked or angry or SING_RE.search(text):
+        model = DRAMA
+    return text, voice_id, model
 
 
 def speak_all(text: str, voice_id: str | None = None, **kw) -> np.ndarray:

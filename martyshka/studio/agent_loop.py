@@ -140,6 +140,17 @@ def self_knowledge() -> str:
   → update_app(restart=true). Генератора картинок нет."""
 
 
+# Самопроверка агента: после правок файлов — обязательно запустить/посмотреть результат
+WRITE_TOOLS = {"write_file", "edit_file", "update_app", "make_icon"}
+VERIFY_TOOLS = {"run_python", "run_command", "page_preview", "http_request", "start_background",
+                "background_output", "screen_look"}
+SELF_CHECK = ("[Проверка перед ответом — брат этого не видит] Ты меняла файлы, но после этого не проверила результат. "
+              "Проверь сама прямо сейчас: запусти код или тесты (run_python / run_command), открой страницу "
+              "(page_preview), запусти программу и посмотри вывод (start_background + background_output) или "
+              "посмотри на экран (screen_look). Нашла ошибку — исправь и проверь снова. Всё работает — коротко "
+              "скажи брату, что сделано и как ты это проверила. Проверить правда невозможно — честно скажи почему.")
+
+
 def system_prompt(kind: str, brain_label: str, project: str, query: str = "") -> str:
     now = datetime.now().strftime("%A %d.%m.%Y %H:%M")
     base = (f"Ты — {config.NAME}, личный ИИ брата на его компьютере (Windows 11, RTX 5070 12 ГБ, 32 ГБ RAM, "
@@ -310,6 +321,7 @@ class Chat:
         allow_all = {"on": False}
         repeats: dict[str, tuple[int, float]] = {}
         stuck = {"n": 0}
+        check = {"dirty": False, "asked": 0}       # самопроверка: есть непроверенные правки
         vision_ctx = {"vision_model": "", "vision_ctx": 0}
 
         def permit(name: str, args: dict, reason: str) -> bool:
@@ -356,9 +368,20 @@ class Chat:
                                              "content": "Не выполнено.", "is_error": True})
                     break
                 if not res.tool_calls:
+                    # САМОПРОВЕРКА: меняла файлы, но после этого ничего не запустила и не посмотрела —
+                    # не отпускаем: пусть проверит и исправит (не больше двух раз за задачу)
+                    if check["dirty"] and check["asked"] < 2 and kind == "task":
+                        check["asked"] += 1
+                        emit({"type": "activity", "kind": "think", "text": "Проверяю свою работу"})
+                        self.history.append({"role": "user", "hidden": True, "text": SELF_CHECK})
+                        continue
                     self._finish_plan(emit)        # ответ без новых шагов — задача сделана, всё с галочкой
                     break
                 for call in res.tool_calls:
+                    if call["name"] in WRITE_TOOLS:
+                        check["dirty"] = True
+                    elif call["name"] in VERIFY_TOOLS:
+                        check["dirty"] = False
                     sig = call["name"] + json.dumps(call["args"], sort_keys=True, ensure_ascii=False)
                     n, last = repeats.get(sig, (0, 0.0))
                     if time.time() - last > 30:        # та же проверка через полминуты — это ожидание, не петля

@@ -494,13 +494,16 @@ class Api:
             g.save_setting("GOVORILKA_FISH_MODEL", value or "")
             names = dict(fish_models())
             msg = "Озвучка в Говорилке: " + names.get(value or "", "как у голоса Мартышки")
-        elif action == "morni":
+        elif action in ("morni", "debate"):
+            topic = (value or "").strip() if action == "debate" else ""
             if not g.is_running():
                 msg = "Мартышки нет в Говорилке — сначала нажми «Зайти в войс»."
+            elif action == "debate" and not topic:
+                msg = "Напиши тему спора."
             else:
                 g.BOT_DIR.mkdir(parents=True, exist_ok=True)
-                g.MORNI_NOW_FLAG.write_text("1")
-                msg = "Сейчас заговорит с Морни."
+                g.MORNI_NOW_FLAG.write_text(json.dumps({"topic": topic}, ensure_ascii=False), encoding="utf-8")
+                msg = f"Сейчас начнёт спор с Морни: «{topic}»." if topic else "Сейчас заговорит с Морни."
         elif action == "autostart":
             g.set_autostart(bool(value))
             msg = "Буду сидеть в Говорилке всегда." if value else "Сама заходить не буду."

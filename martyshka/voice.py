@@ -185,8 +185,13 @@ class Voice:
             text = self._text_q.get()
             try:
                 if not self._interrupt.is_set():
-                    for audio in fish.speak(text, self.voice_id or getattr(config, "VOICE_ID", ""),
-                                            should_stop=self._interrupt.is_set):
+                    try:
+                        from . import longmem
+                        mood = longmem.anger(longmem.OWNER)
+                    except Exception:
+                        mood = 0
+                    said, vid, mdl = fish.mood_pick(text, self.voice_id or getattr(config, "VOICE_ID", ""), None, mood)
+                    for audio in fish.speak(said, vid, should_stop=self._interrupt.is_set, model=mdl):
                         if self._interrupt.is_set():
                             break
                         self._audio_q.put(audio)
