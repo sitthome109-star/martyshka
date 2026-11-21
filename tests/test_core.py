@@ -264,24 +264,20 @@ class TestNewStudioAndTelegramFeatures(unittest.TestCase):
 
     def test_fish_tune_text_and_prosody(self):
         from martyshka import fish
-        # Для бесплатной s2.1 русские теги переводятся в канонические английские
-        s2 = fish.tune_text("[с усмешкой] Привет! [смешок] Как дела? [пауза]", fish.FREE)
-        self.assertIn("[chuckle]", s2)
-        self.assertIn("[pause]", s2)
-        # Для Drama 3 сохраняется богатая русская режиссура
-        dr = fish.tune_text("[холодно, с усмешкой] Ну ты и выдал.", fish.DRAMA)
-        self.assertIn("[холодно, с усмешкой]", dr)
-        # Динамическая просодия
-        p_ang = fish.prosody_for("[angry] Хватит!", fish.FREE, anger=4)
-        p_wh = fish.prosody_for("<whisper>Тихо…</whisper>", fish.DRAMA, anger=0)
-        self.assertGreater(p_ang["speed"], 1.0)
-        self.assertLess(p_wh["speed"], 1.0)
-        self.assertGreaterEqual(p_wh["temperature"], 0.9)
-        # mood_pick включает Drama 3 для шёпота/хохота/драмы (когда MOOD_VOICE включён)
+        # Русские метки не заменяются на английские (чтобы не сбивать русские ударения в S2.1)
+        s2 = fish.tune_text("[с усмешкой] Привет! [смешок]", fish.FREE)
+        self.assertEqual(s2, "[с усмешкой] Привет! [смешок]")
+        # Стабильные параметры просодии (без завышенной temperature и сдвига speed)
+        p_free = fish.prosody_for("Привет!", fish.FREE, anger=0)
+        p_dr = fish.prosody_for("Привет!", fish.DRAMA, anger=4)
+        self.assertEqual(p_free["temperature"], 0.75)
+        self.assertEqual(p_free["speed"], 1.0)
+        self.assertEqual(p_dr["speed"], 1.0)
+        # mood_pick включает Drama 3 для {драма}, пения и злости >= 3 (когда MOOD_VOICE включён)
         orig_mv = fish.config.MOOD_VOICE
         try:
             fish.config.MOOD_VOICE = True
-            _, _, mdl = fish.mood_pick("[хохочет] Ха-ха!", "v1", fish.FREE, anger=0)
+            _, _, mdl = fish.mood_pick("[драма] Ну ты выдал!", "v1", fish.FREE, anger=0)
             self.assertEqual(mdl, fish.DRAMA)
         finally:
             fish.config.MOOD_VOICE = orig_mv
