@@ -27,6 +27,11 @@ static STOP_RX: Lazy<Regex> = Lazy::new(|| {
 static LEAVE_VOICE_RX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)(выйди\s+(?:из|с)\s+войс\w*|уйди\s+(?:из|с)\s+войс\w*|покинь\s+войс\w*|выйди\s+из\s+комнат\w*|выйди\s+с\s+комнат\w*|выходи\s+(?:из|с)\s+войс\w*|\bвыйди\b.*\bвойс\w*|\bливай\b)").unwrap()
 });
+static SEARCH_RX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)(загугл\w*|погугл\w*|найди\s+в\s+интернет\w*|поищи\s+в\s+(?:сети|интернет\w*)|какая\s+погод\w*|курс\s+(?:доллар|евро|битк|btc|рубл)|поч[её]м\s+|свеж\w*\s+новост\w*|когда\s+выйдет|кто\s+выиграл|сколько\s+стоит)").unwrap()
+});
+static HTML_TAG_RX: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").unwrap());
+static ACTIVE_ROLE: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));
 static TON_RX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\[\s*ТОН\s*:\s*(\d)\s*\]").unwrap());
 static MEM_RX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\[\s*ЗАПОМНИ(?:\s+О)?\s*[:\-]?\s*([^|\]:]+?)\s*(?:\||:)\s*([^\]]+)\]").unwrap()
@@ -284,6 +289,119 @@ pub fn set_avatar_b64(jpeg_b64: &str) -> bool {
 
 static UPDATING: AtomicBool = AtomicBool::new(false);
 
+/// Быстрый живой поиск в интернете (DuckDuckGo Lite) для ответов в войсе и чате.
+pub async fn web_search_brief(query: &str) -> String {
+    let q = query.trim();
+    if q.is_empty() {
+        return String::new();
+    }
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(6))
+        .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36")
+        .build()
+    else {
+        return String::new();
+    };
+    let url = format!("https://lite.duckduckgo.com/lite/?q={}", urlencoding::encode(q));
+    let Ok(resp) = client.get(url).send().await else { return String::new() };
+    let Ok(html) = resp.text().await else { return String::new() };
+    let mut snippets = Vec::new();
+    for line in html.split("class='result-snippet'>").skip(1).take(5) {
+        if let Some((raw, _)) = line.split_once("</td>") {
+            let clean = HTML_TAG_RX
+                .replace_all(raw, " ")
+                .replace("&quot;", "\"")
+                .replace("&amp;", "&")
+                .replace("&#x27;", "'")
+                .replace("&nbsp;", " ");
+            let compact = clean.split_whitespace().collect::<Vec<_>>().join(" ");
+            if compact.chars().count() > 20 {
+                snippets.push(compact);
+            }
+        }
+    }
+    snippets.join("\n- ")
+}
+
+fn role_instruction(role: &str) -> String {
+    let r = role.trim();
+    if r.is_empty() {
+        return String::new();
+    }
+    let desc = match r.to_lowercase().as_str() {
+        "пират" => "Ты — дерзкая морская пиратка! Говоришь с пиратским колоритом («йо-хо-хо», «тысяча чертей», «на абордаж»), но по делу и смешно.",
+        "судья" => "Ты — строгая, пафосная судья в зале суда! Разбираешь всё как судебное дело («протест отклонён», «приговаривается к…», «занести в протокол»).",
+        "диктор" => "Ты — ведущая срочного выпуска новостей! Озвучиваешь всё торжественным и чуть ироничным тоном диктора («Срочное включение! По данным наших источников…»).",
+        "цундэрэ" | "цундере" => "Ты — классическая аниме-цундэрэ: делаешь вид, что тебе всё равно и ты ворчишь («б-бака! не то чтобы мне было дело…»), но на деле заботишься.",
+        "гопник" => "Ты — дерзкая уличная девчонка с района: говоришь по-пацански, с подколами и юмором.",
+        "гений" | "злой гений" => "Ты — харизматичный злой гений из кино: всё превращаешь в грандиозный коварный план с театральным смехом.",
+        "поэт" => "Ты — вдохновенная поэтесса: отвечаешь складно, в рифму и с выразительной подачей.",
+        _ => r,
+    };
+    format!("\nАКТИВНАЯ РОЛЬ ПЕРЕВОПЛОЩЕНИЯ ({r}): {desc} Держи эту роль в каждой реплике, пока не отменят.")
+}
+
+pub fn run_show_mode(kind: &str, target: String) -> bool {
+    let Some(tx) = ACTIVE_TX.lock().clone() else { return false };
+    let speak_stop = ACTIVE_SPEAK_STOP.lock().clone().unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    let history = ACTIVE_HISTORY.lock().clone().unwrap_or_else(|| Arc::new(Mutex::new(Vec::new())));
+    let kind_s = kind.to_string();
+    let is_morni = target.to_lowercase().contains("морни") || target.to_lowercase().contains("morni");
+    if is_morni {
+        trigger_morni();
+    }
+    tokio::spawn(async move {
+        let t = target.trim().to_string();
+        let norm_t = longmem::norm(&t);
+        let facts = longmem::load_people()
+            .get(&norm_t)
+            .map(|p| p.facts.join("; "))
+            .unwrap_or_default();
+        let facts_hint = if facts.is_empty() {
+            String::new()
+        } else {
+            format!(" Вот реальные факты о «{t}» из твоей памяти (используй их!): {facts}.")
+        };
+        let prompt = match kind_s.as_str() {
+            "song" => format!(
+                "Сочини и СПОЙ короткую, цепляющую, ритмичную песню (2 куплета + припев, с рифмой) на тему: «{}».{} \
+Используй тег {{напевает}} в начале строк и живые эмоции, чтобы Fish Audio красиво пропел!",
+                if t.is_empty() { "наша весёлая компания в Говорилке" } else { &t },
+                facts_hint
+            ),
+            "battle" => format!(
+                "Устрой жёсткий, смешной и ритмичный РЭП-БАТТЛ (8–12 панчлайнов в рифму, с мощным флоу!) против «{}».{} \
+Используй {{быстро, взахлёб}}, <forceful>, {{насмешливо}}.{}",
+                if t.is_empty() { "Морни" } else { &t },
+                facts_hint,
+                if is_morni { " Начни с «Морни,»!" } else { "" }
+            ),
+            "roast" => format!(
+                "Сделай остроумную СТЕНДАП-ПРОЖАРКУ участника «{}» (как крутой комик со сцены: 4–6 метких шуток с {{пауза}}, {{насмешливо}}, {{смешок}}).{} \
+Строго в рамках границ (без оскорблений внешности, родных, здоровья и национальности — только про привычки, поведение и шутки!).",
+                if t.is_empty() { "sitthome" } else { &t },
+                facts_hint
+            ),
+            _ => return,
+        };
+        let sys = system_prompt("sitthome", 0, is_morni, false, &prompt);
+        let msgs = vec![
+            json!({"role": "system", "content": sys}),
+            json!({"role": "user", "content": prompt}),
+        ];
+        let model = config::get().govorilka_model;
+        if let Ok(r) = deepseek::stream_chat(msgs, &model, false, "low", 4000, None, Arc::new(AtomicBool::new(false)), |_| {}, |_| {}).await {
+            let clean = clean_reply_tags(&r.text, "sitthome");
+            if !clean.is_empty() {
+                log_line("Мартышка (шоу)", &clean);
+                history.lock().push(json!({"role": "assistant", "content": clean.clone()}));
+                stream_tts_to_gateway(&clean, 0, &tx, &speak_stop).await;
+            }
+        }
+    });
+    true
+}
+
 pub fn trigger_self_update(notify_channel: Option<String>) -> Value {
     let script = std::env::var("MARTYSHKA_UPDATE_SCRIPT")
         .unwrap_or_else(|_| "/opt/martyshka/update.sh".to_string());
@@ -353,6 +471,7 @@ pub fn full_status_payload() -> Value {
         "mood_voice": s.mood_voice,
         "greet": s.govorilka_greet,
         "proactive": s.govorilka_proactive,
+        "role": ACTIVE_ROLE.lock().clone(),
         "log": recent_log(100),
         "people": people,
         "lessons": growth::items(),
@@ -440,6 +559,23 @@ pub fn apply_control_action(v: &Value) -> Value {
             json!({"ok": true, "message": "Урок удалён ✓"})
         }
         "self_update" => trigger_self_update(Some("общий".into())),
+        "role" => {
+            let r = v.get("val").and_then(Value::as_str).unwrap_or("").trim().to_string();
+            let low = r.to_lowercase();
+            if r.is_empty() || matches!(low.as_str(), "сброс" | "выкл" | "off" | "нет") {
+                ACTIVE_ROLE.lock().clear();
+                json!({"ok": true, "message": "Роль сброшена — я снова обычная Мартышка ✓"})
+            } else {
+                *ACTIVE_ROLE.lock() = r.clone();
+                json!({"ok": true, "message": format!("Перевоплотилась в роль: {r} 🎭")})
+            }
+        }
+        "song" | "battle" | "roast" => {
+            let kind = v.get("act").and_then(Value::as_str).unwrap_or("song");
+            let t = v.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+            run_show_mode(kind, t);
+            json!({"ok": true, "message": match kind { "song" => "Сочиняю и пою в войс! 🎤", "battle" => "Запускаю рэп-баттл! 🔥", _ => "Готовлю стендап-прожарку! 🎙️" }})
+        }
         _ => json!({"ok": false, "message": "Неизвестная команда"}),
     }
 }
@@ -750,10 +886,11 @@ fn system_prompt(who: &str, anger: i32, with_morni: bool, for_chat: bool, query:
 Активно используй всю палитру, чередуй разные эмоции."
     };
 
+    let role_block = role_instruction(&ACTIVE_ROLE.lock());
     let extra_block = if s.personality_extra.trim().is_empty() {
-        String::new()
+        role_block
     } else {
-        format!("\nДОПОЛНИТЕЛЬНЫЕ УКАЗАНИЯ ХОЗЯИНА ПО ХАРАКТЕРУ:\n{}", s.personality_extra.trim())
+        format!("{role_block}\nДОПОЛНИТЕЛЬНЫЕ УКАЗАНИЯ ХОЗЯИНА ПО ХАРАКТЕРУ:\n{}", s.personality_extra.trim())
     };
     let base = format!(
         "Ты — {} (девушка, о себе — в женском роде). Ты подключена напрямую к голосовому серверу «Говорилка» 24/7 \
@@ -832,12 +969,49 @@ async fn handle_chat_cmd(
     if low == "м!список" || low == "м!команды" {
         return Some(
             "Команды Мартышки (префикс «м!», с Морни не пересекаются):\n\
-• Для всех: м!войс (зайти в войс) · м!выйди (выйти с войса) · м!кто (кто в войсе) · м!список\n\
-• Для хозяина: м!стоп · м!тихо · м!слушай · м!скажи <текст> · м!напиши <текст> · м!тема <тема> · м!морни [тема] · \
+• Для всех: м!войс · м!выйди · м!кто · м!список · м!поиск <запрос> · м!песня <тема> · м!баттл <имя> · м!прожарка <имя>\n\
+• Для хозяина: м!роль <роль|сброс> · м!стоп · м!тихо · м!слушай · м!скажи <текст> · м!напиши <текст> · м!тема <тема> · м!морни [тема] · \
 м!голос <имя> · м!движок free|pro|drama · м!мозг flash|pro · м!привет вкл|выкл · м!актив вкл|выкл · \
 м!память <имя> · м!запомни имя | факт · м!забудь имя | факт · м!остынь [имя] · м!сброс · м!баланс · м!статус · м!обновись"
                 .into(),
         );
+    }
+    if let Some(rest) = trimmed.strip_prefix("м!песня ").or_else(|| trimmed.strip_prefix("М!песня ")) {
+        run_show_mode("song", rest.trim().to_string());
+        return Some(format!("Сочиняю и пою песню про «{}»! 🎤", rest.trim()));
+    }
+    if low == "м!песня" {
+        run_show_mode("song", String::new());
+        return Some("Сочиняю и пою песню в войс! 🎤".into());
+    }
+    if let Some(rest) = trimmed.strip_prefix("м!баттл ").or_else(|| trimmed.strip_prefix("М!баттл ")) {
+        run_show_mode("battle", rest.trim().to_string());
+        return Some(format!("Вызываю «{}» на рэп-баттл в войсе! 🔥", rest.trim()));
+    }
+    if let Some(rest) = trimmed.strip_prefix("м!прожарка ").or_else(|| trimmed.strip_prefix("М!прожарка ")) {
+        run_show_mode("roast", rest.trim().to_string());
+        return Some(format!("Запускаю стендап-прожарку для «{}»! 🎙️", rest.trim()));
+    }
+    if let Some(rest) = trimmed.strip_prefix("м!поиск ").or_else(|| trimmed.strip_prefix("М!поиск ")) {
+        let q = rest.trim().to_string();
+        if !q.is_empty() {
+            let web = web_search_brief(&q).await;
+            if web.is_empty() {
+                return Some(format!("Ничего свежего по «{q}» не нашлось."));
+            }
+            let sys = system_prompt(who, 0, false, true, &q);
+            let msgs = vec![
+                json!({"role": "system", "content": sys}),
+                json!({"role": "user", "content": format!("Коротко и понятно ответь на запрос «{q}» по этим свежим данным из интернета:\n- {web}")}),
+            ];
+            let model = config::get().govorilka_model;
+            if let Ok(r) = deepseek::stream_chat(msgs, &model, false, "low", 1000, None, Arc::new(AtomicBool::new(false)), |_| {}, |_| {}).await {
+                let clean = clean_reply_tags(&r.text, who);
+                if !clean.is_empty() {
+                    return Some(clean);
+                }
+            }
+        }
     }
     if low == "м!войс" {
         let _ = tx.send(Message::Text(json!({"type": "join_voice"}).to_string().into()));
@@ -867,6 +1041,16 @@ async fn handle_chat_cmd(
         return None;
     }
 
+    if let Some(rest) = trimmed.strip_prefix("м!роль ").or_else(|| trimmed.strip_prefix("М!роль ")) {
+        let r = rest.trim();
+        let rl = r.to_lowercase();
+        if r.is_empty() || matches!(rl.as_str(), "сброс" | "выкл" | "off" | "нет") {
+            ACTIVE_ROLE.lock().clear();
+            return Some("Роль сброшена — я снова обычная Мартышка!".into());
+        }
+        *ACTIVE_ROLE.lock() = r.to_string();
+        return Some(format!("Перевоплотилась в роль: {r} 🎭 (отменить: м!роль сброс)"));
+    }
     if low == "м!обновись" {
         let r = trigger_self_update(Some(channel.to_string()));
         return Some(r.get("message").and_then(Value::as_str).unwrap_or("Обновляюсь!").to_string());
@@ -1170,6 +1354,12 @@ fn spawn_utterance(
         let mut sys = system_prompt(&nick, anger, is_morni, false, &text);
         if proactive_turn {
             sys.push_str("\nК тебе сейчас напрямую не обращались. Если есть короткая, меткая, смешная реплика в тему — скажи её; если добавить особо нечего — ответь строго [МОЛЧУ].");
+        } else if SEARCH_RX.is_match(&text) {
+            let web = web_search_brief(&text).await;
+            if !web.is_empty() {
+                log_line("поиск", &format!("нашла в сети по «{text}»"));
+                sys.push_str(&format!("\nСВЕЖИЕ ДАННЫЕ ИЗ ИНТЕРНЕТА (используй их в ответе!):\n- {web}"));
+            }
         }
         let mut msgs = vec![json!({"role": "system", "content": sys})];
         msgs.extend(history.lock().clone());

@@ -1004,6 +1004,11 @@ async function renderGov(){ const box=$('#pg');
     ['м!войс','Зайти в голосовой канал (для всех)'],
     ['м!выйди','Выйти из войса в чат (для всех)'],
     ['м!кто','Кто сейчас в войсе (для всех)'],
+    ['м!поиск <запрос>','Живой поиск в интернете (для всех)'],
+    ['м!песня <тема>','Спеть песню в войс (для всех)'],
+    ['м!баттл <имя>','Рэп-баттл в войс (для всех)'],
+    ['м!прожарка <имя>','Стендап-прожарка (для всех)'],
+    ['м!роль <роль|сброс>','Перевоплощение (пират/судья/цундэрэ…)'],
     ['м!стоп','Мгновенно замолчать'],
     ['м!тихо / м!слушай','Тихий режим / снова отвечать'],
     ['м!скажи <текст>','Озвучить фразу в войс'],
@@ -1051,9 +1056,24 @@ async function renderGov(){ const box=$('#pg');
             <button class="btn" id="gDoChat">В чат</button>
           </div>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <input class="in" id="gTopic" style="flex:1;min-width:180px" placeholder="Тема для обсуждения или спора с Морни…">
+            <input class="in" id="gTopic" style="flex:1;min-width:180px" placeholder="Тема / имя участника (для песни, баттла, прожарки или спора)…">
             <button class="btn" id="gDoTopic">Вкинуть тему</button>
             <button class="btn" id="gDebate">Спор с Морни</button>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <button class="btn" id="gSong">🎤 Спеть песню</button>
+            <button class="btn" id="gBattle">🔥 Рэп-баттл</button>
+            <button class="btn" id="gRoast">🎙️ Прожарка</button>
+            <select class="in" id="gRole" style="width:175px;flex:none;margin-left:auto" title="Перевоплощение в роль">
+              <option value="">🎭 Роль: обычная</option>
+              <option value="пират">🏴‍☠️ Пират</option>
+              <option value="судья">⚖️ Судья</option>
+              <option value="диктор">📺 Диктор новостей</option>
+              <option value="цундэрэ">🌸 Аниме-цундэрэ</option>
+              <option value="гопник">🧢 Дерзкая с района</option>
+              <option value="гений">🧠 Злой гений</option>
+              <option value="поэт">📜 Поэтесса</option>
+            </select>
           </div>
         </div>
         <div class="field"><div class="lab"><b>Мозг на сервере</b><small>Flash отвечает мгновенно, Pro — думает глубже.</small></div><div class="ctl"><select class="in" id="gModel"><option value="deepseek-flash">DeepSeek Flash</option><option value="deepseek-v4-pro">DeepSeek Pro</option></select></div></div>
@@ -1097,6 +1117,10 @@ async function renderGov(){ const box=$('#pg');
       $('#gDoChat').onclick=async()=>{ const t=$('#gSay').value.trim(); if(!t) return; toast((await api().gov_action('chat',t,$('#gChan').value)).message); $('#gSay').value=''; };
       $('#gDoTopic').onclick=async()=>{ const t=$('#gTopic').value.trim(); toast((await api().gov_action('topic',t)).message); $('#gTopic').value=''; };
       $('#gDebate').onclick=async()=>{ const t=$('#gTopic').value.trim(); toast((await api().gov_action('debate',t)).message); $('#gTopic').value=''; };
+      $('#gSong').onclick=async()=>{ const t=$('#gTopic').value.trim(); toast((await api().gov_action('song',t)).message); };
+      $('#gBattle').onclick=async()=>{ const t=$('#gTopic').value.trim(); toast((await api().gov_action('battle',t)).message); };
+      $('#gRoast').onclick=async()=>{ const t=$('#gTopic').value.trim(); toast((await api().gov_action('roast',t)).message); };
+      $('#gRole').value=g.role||''; $('#gRole').onchange=async()=>toast((await api().gov_action('role',$('#gRole').value)).message);
       box.querySelectorAll('.cmd-chip').forEach(b=>b.onclick=()=>{ navigator.clipboard?.writeText(b.dataset.c); toast('Скопировано: '+b.dataset.c); });
       const vc=document.createElement('div'); $('#gVoice').appendChild(vc); voicePicker(vc,{key:'GOVORILKA_VOICE_ID',value:g.voice,instant:true}); }
     const s=$('#gst'); if(!s) return;

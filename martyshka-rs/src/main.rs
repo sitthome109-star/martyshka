@@ -725,6 +725,8 @@ fn run_desktop_ui() {
                                 "chat" => json!({"act": "chat", "text": val.and_then(Value::as_str).unwrap_or(""), "channel": val2.and_then(Value::as_str).unwrap_or("общий")}),
                                 "say" => json!({"act": "say", "text": val.and_then(Value::as_str).unwrap_or("")}),
                                 "topic" | "debate" => json!({"act": act, "text": val.and_then(Value::as_str).unwrap_or(""), "morni": act == "debate"}),
+                                "song" | "battle" | "roast" => json!({"act": act, "text": val.and_then(Value::as_str).unwrap_or("")}),
+                                "role" => json!({"act": "role", "val": val.and_then(Value::as_str).unwrap_or("")}),
                                 "mute" => json!({"act": "mute", "val": val.and_then(Value::as_bool).unwrap_or(false)}),
                                 "remember" => json!({"act": "remember", "who": val.and_then(Value::as_str).unwrap_or(""), "fact": val2.and_then(Value::as_str).unwrap_or("")}),
                                 "forget" => json!({"act": "forget", "who": val.and_then(Value::as_str).unwrap_or(""), "fact": val2.and_then(Value::as_str).unwrap_or("")}),
