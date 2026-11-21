@@ -42,15 +42,24 @@ def _save(path: Path, data) -> None:
     tmp.replace(path)
 
 
+OWNER_NICKS = ("sitth", "sitthome")
+
+
 def norm(name: str) -> str:
     """Один и тот же человек под разными написаниями: «Enbulih», «enbulih» → один ключ."""
     n = re.sub(r"\s+", " ", (name or "").strip())
-    if not n or n.lower() in ("брат", "хозяин", "sitthome", "owner"):
+    low = n.lower()
+    if not n or low in ("брат", "хозяин", "sitth", "sitthome", "sith", "owner"):
         return OWNER
-    # ник брата sitthome на слух распознаётся по-разному: Сидхам, Ситхам, Ситхом, Сиддхом, Ситхун…
-    if re.fullmatch(r"(сит+х?[оау]м|сид+х?[оау]м|сит+хун|сит+хоум|sit+h?om?e?)", n.lower()):
+    # ник хозяина sitth / sitthome на слух и в OCR распознаётся по-разному
+    if re.fullmatch(r"(сит+х?|сид+х?|сит+х?[оау]м|сид+х?[оау]м|сит+хун|сит+хоум|sit+h?o?m?e?|sith+)", low):
         return OWNER
     return n
+
+
+def is_owner(name: str) -> bool:
+    """True, если это хозяин Мартышки (sitth / sitthome / брат)."""
+    return bool((name or "").strip()) and norm(name) == OWNER
 
 
 # ---------- лента: всё, что было ----------

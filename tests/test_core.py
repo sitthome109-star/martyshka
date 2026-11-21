@@ -251,6 +251,17 @@ class TestNewStudioAndTelegramFeatures(unittest.TestCase):
         self.assertEqual(w.who(t, t + 1.0), "")
         self.assertEqual(set(w.last_overlap), {"Морни", "Enbulih"})
 
+    def test_owner_sitth_recognition(self):
+        from martyshka import govorilka as g
+        for alias in ("sitth", "Sitth", "sitthome", "Ситх", "Сидхом", "брат"):
+            self.assertEqual(longmem.norm(alias), longmem.OWNER, alias)
+            self.assertTrue(longmem.is_owner(alias), alias)
+        self.assertFalse(longmem.is_owner("Enbulih"))
+        self.assertFalse(longmem.is_owner("Морни"))
+        prompt = g.system_prompt(who="sitth")
+        self.assertIn("ТВОЙ ХОЗЯИН", prompt)
+        self.assertIn("sitth", prompt)
+
     def test_govorilka_anger_does_not_attack_or_grow_wrongly(self):
         from unittest import mock
         from martyshka import govorilka as g
