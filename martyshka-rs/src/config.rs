@@ -105,6 +105,11 @@ impl Default for Settings {
     }
 }
 
+fn has_real_settings(dir: &Path) -> bool {
+    let f = dir.join("data").join("settings.json");
+    std::fs::metadata(&f).map(|m| m.is_file() && m.len() > 80).unwrap_or(false)
+}
+
 /// Корень проекта Martyshka (где лежит папка data/).
 pub fn project_dir() -> PathBuf {
     if let Ok(env_dir) = std::env::var("MARTYSHKA_DIR") {
@@ -115,10 +120,25 @@ pub fn project_dir() -> PathBuf {
     }
     if let Ok(exe) = std::env::current_exe() {
         for anc in exe.ancestors() {
-            if anc.join("data").join("settings.json").is_file()
+            if has_real_settings(anc)
                 || (anc.join("data").is_dir() && anc.join("martyshka").is_dir())
             {
                 return anc.to_path_buf();
+            }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        for anc in cwd.ancestors() {
+            if has_real_settings(anc) {
+                return anc.to_path_buf();
+            }
+        }
+    }
+    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+        for sub in ["Documents/Martyshka", "Документы/Martyshka", "Martyshka"] {
+            let p = PathBuf::from(&home).join(sub);
+            if has_real_settings(&p) {
+                return p;
             }
         }
     }
@@ -145,7 +165,7 @@ static STATE: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(load_from_disk()
 pub fn load_from_disk() -> Settings {
     let p = settings_file();
     if let Ok(raw) = std::fs::read_to_string(&p) {
-        if let Ok(s) = serde_json::from_str::<Settings>(&raw) {
+        if let Ok(s) = serde_json::from_str::<Settings>(raw.trim_start_matches('\u{feff}')) {
             return s;
         }
     }
