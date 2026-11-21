@@ -1,0 +1,20 @@
+[Unit]
+Description=Martyshka 24/7 Voice Bot for Govorilka (botgw + remote admin)
+After=network-online.target botgw.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/martyshka
+Environment=MARTYSHKA_DIR=/opt/martyshka
+Environment=MARTYSHKA_SRC=/opt/martyshka-src
+Environment=MARTYSHKA_UPDATE_SCRIPT=/opt/martyshka/update.sh
+Environment=PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/martyshka/martyshka --govorilka
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

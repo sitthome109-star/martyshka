@@ -1,0 +1,15 @@
+{
+  "NAME": "Мартышка",
+  "OWNER_NICKNAME": "брат",
+  "DEEPSEEK_KEY": "ВСТАВИТЬ_DEEPSEEK_KEY",
+  "FISH_KEY": "ВСТАВИТЬ_FISH_KEY",
+  "FISH_MODEL": "s2.1-pro-free",
+  "VOICE_ID": "df3144db39a34a02bdeeb2d3ad172211",
+  "MOOD_VOICE": false,
+  "GOVORILKA_BOT_URL": "wss://gv.34-107-2-200.sslip.io/bot-ws",
+  "GOVORILKA_BOT_TOKEN": "ВСТАВИТЬ_GOVORILKA_BOT_TOKEN",
+  "GOVORILKA_NICK": "Мартышка",
+  "GOVORILKA_VOICE_ID": "df3144db39a34a02bdeeb2d3ad172211",
+  "GOVORILKA_MODEL": "deepseek-flash",
+  "GOVORILKA_FISH_MODEL": "s2.1-pro-free"
+}

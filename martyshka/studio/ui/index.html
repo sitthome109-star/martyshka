@@ -1017,7 +1017,8 @@ async function renderGov(){ const box=$('#pg');
     ['!забудь имя | факт','Удалить факт из памяти'],
     ['!успокойся [имя]','Сбросить злость на человека/всех'],
     ['!сброс','Очистить контекст текущей беседы'],
-    ['!баланс / !статус','Балансы API и статус 24/7']
+    ['!баланс / !статус','Балансы API и статус 24/7'],
+    ['!обновись','Обновить Мартышку на сервере с GitHub']
   ];
   const fmtUp=s=>{ if(!s) return ''; const h=Math.floor(s/3600), m=Math.floor((s%3600)/60); return h?`${h}ч ${m}м`:`${m}м ${s%60}с`; };
   const fill=async first=>{ const g=await api().gov_info();
@@ -1034,6 +1035,7 @@ async function renderGov(){ const box=$('#pg');
             <button class="btn" id="gMute">Тихий режим</button>
             <button class="btn" id="gMorni">Поговорить с Морни</button>
             <button class="btn" id="gClear">Сбросить контекст</button>
+            <button class="btn pri" id="gUpdate" style="display:none" title="Скачать свежий код с GitHub, пересобрать и перезапустить Мартышку на сервере">🔄 Обновить сервер</button>
           </div>
         </div>
         <div class="card" style="margin:10px 0">
@@ -1081,6 +1083,7 @@ async function renderGov(){ const box=$('#pg');
       $('#gMute').onclick=async()=>{ const next=!$('#gMute').classList.contains('pri'); toast((await api().gov_action('mute',next)).message); fill(false); };
       $('#gMorni').onclick=async()=>{ toast((await api().gov_action('morni')).message); };
       $('#gClear').onclick=async()=>{ toast((await api().gov_action('clear')).message); };
+      $('#gUpdate').onclick=async()=>{ if(!confirm('Обновить серверную Мартышку с GitHub и перезапустить? (~30–60 сек)')) return; toast((await api().gov_action('self_update')).message); };
       $('#gDoSay').onclick=async()=>{ const t=$('#gSay').value.trim(); if(!t) return; toast((await api().gov_action('say',t)).message); $('#gSay').value=''; };
       $('#gDoChat').onclick=async()=>{ const t=$('#gSay').value.trim(); if(!t) return; toast((await api().gov_action('chat',t,$('#gChan').value)).message); $('#gSay').value=''; };
       $('#gDoTopic').onclick=async()=>{ const t=$('#gTopic').value.trim(); toast((await api().gov_action('topic',t)).message); $('#gTopic').value=''; };
@@ -1093,6 +1096,7 @@ async function renderGov(){ const box=$('#pg');
     const gm=$('#gmode'); gm.textContent=g.remote?'Сервер 24/7':'Локально (ПК)'; gm.className='pill '+(g.remote?'ok':'');
     $('#gup').textContent=g.running&&g.uptime?'онлайн '+fmtUp(g.uptime):'';
     $('#gEnsure').style.display=g.running?'none':'inline-flex';
+    $('#gUpdate').style.display=g.remote?'inline-flex':'none';
     const mb=$('#gMute'); mb.classList.toggle('pri',!!g.muted); mb.textContent=g.muted?'Тихий режим: ВКЛ':'Тихий режим';
     $('#gstatus').textContent=g.status;
     $('#gUsers').innerHTML=(g.users||[]).length?(g.users||[]).map(u=>`<span class="uchip">${esc(u)}</span>`).join(''):'<small style="color:var(--dim)">В войсе пока никого</small>';

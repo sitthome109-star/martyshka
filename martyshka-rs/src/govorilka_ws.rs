@@ -278,6 +278,52 @@ pub fn set_avatar_b64(jpeg_b64: &str) -> bool {
     true
 }
 
+static UPDATING: AtomicBool = AtomicBool::new(false);
+
+pub fn trigger_self_update(notify_channel: Option<String>) -> Value {
+    let script = std::env::var("MARTYSHKA_UPDATE_SCRIPT")
+        .unwrap_or_else(|_| "/opt/martyshka/update.sh".to_string());
+    if !std::path::Path::new(&script).is_file() {
+        return json!({"ok": false, "message": "Автообновление работает только на Linux-сервере (нет /opt/martyshka/update.sh)"});
+    }
+    if UPDATING.swap(true, Ordering::SeqCst) {
+        return json!({"ok": true, "message": "Обновление уже идёт, подожди ~30–60 секунд!"});
+    }
+    log_line("система", &format!("Запуск автообновления с GitHub ({script})…"));
+    tokio::spawn(async move {
+        let out = tokio::process::Command::new("bash")
+            .arg(&script)
+            .output()
+            .await;
+        match out {
+            Ok(res) if res.status.success() => {
+                log_line("система", "Обновление собрано! Перезапускаюсь в новую версию…");
+                if let Some(ch) = notify_channel.as_deref() {
+                    send_chat_text(ch, "Обновление с GitHub готово! Перезапускаюсь на 2 секунды…");
+                }
+                tokio::time::sleep(Duration::from_millis(600)).await;
+                std::process::exit(0);
+            }
+            Ok(res) => {
+                let err = String::from_utf8_lossy(&res.stderr);
+                let tail: String = err.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" | ");
+                log_line("ошибка", &format!("Автообновление не удалось: {tail}"));
+                if let Some(ch) = notify_channel.as_deref() {
+                    send_chat_text(ch, &format!("Ошибка обновления (осталась на старой версии): {tail}"));
+                }
+            }
+            Err(e) => {
+                log_line("ошибка", &format!("Не удалось запустить {script}: {e}"));
+                if let Some(ch) = notify_channel.as_deref() {
+                    send_chat_text(ch, &format!("Не удалось запустить обновление: {e}"));
+                }
+            }
+        }
+        UPDATING.store(false, Ordering::SeqCst);
+    });
+    json!({"ok": true, "message": "Обновление с GitHub запущено! Через ~30–60 секунд Мартышка сама перезапустится в новой версии."})
+}
+
 pub fn full_status_payload() -> Value {
     let s = config::get();
     let people: Vec<Value> = longmem::load_people()
@@ -383,6 +429,7 @@ pub fn apply_control_action(v: &Value) -> Value {
             growth::forget(text);
             json!({"ok": true, "message": "Урок удалён ✓"})
         }
+        "self_update" => trigger_self_update(Some("общий".into())),
         _ => json!({"ok": false, "message": "Неизвестная команда"}),
     }
 }
@@ -668,11 +715,15 @@ async fn handle_owner_chat_cmd(
     let trimmed = text.trim();
     let low = trimmed.to_lowercase();
 
+    if low == "!обновись" || low == "!update" {
+        let r = trigger_self_update(Some(channel.to_string()));
+        return Some(r.get("message").and_then(Value::as_str).unwrap_or("Обновляюсь!").to_string());
+    }
     if low == "!помощь" || low == "!команды" || low == "!help" {
         return Some(
             "Команды хозяина: !войс · !выйди · !стоп · !тише · !слушай · !скажи <текст> · !напиши <текст> · \
 !тема <тема> · !морни [тема] · !голос <имя> · !движок free|pro|drama · !мозг flash|pro · \
-!кто · !память <имя> · !запомни <имя> | <факт> · !забудь <имя> | <факт> · !успокойся [имя] · !сброс · !баланс · !статус"
+!кто · !память <имя> · !запомни <имя> | <факт> · !забудь <имя> | <факт> · !успокойся [имя] · !сброс · !баланс · !статус · !обновись"
                 .into(),
         );
     }
