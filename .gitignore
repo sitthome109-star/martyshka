@@ -17,5 +17,6 @@ data/*
 
 # Сборки
 *.exe
+*.WebView2/
 build/
 dist/
