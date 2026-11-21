@@ -150,6 +150,15 @@ def remember_about(name: str, fact: str) -> bool:
         return True
 
 
+# Пол тех, кого легко перепутать (имя не подсказывает): Морни — девушка. Остальное — в «пол» карточки человека.
+GENDERS = {"морни": "ж", "мурни": "ж", "morni": "ж"}
+
+
+def _genders_note() -> str:
+    women = sorted({k.capitalize() for k, v in GENDERS.items() if v == "ж" and not k.isascii()})
+    return ("Пиши о них в правильном роде: " + ", ".join(women) + " — девушка (она, сказала, уверена).") if women else ""
+
+
 def add_topic(name: str, topic: str) -> bool:
     """Любимая тема человека (о чём ему интересно говорить): игры, музыка, аниме, работа…"""
     topic = (topic or "").strip().strip(".").lower()[:60]
@@ -261,7 +270,8 @@ def _learn_people(recs: list[dict]) -> None:
             "Лента разговоров:\n" + _feed_text(recs, 40000) +
             "\n\nВыпиши новые устойчивые факты о людях (не о Мартышке) и их любимые темы — о чём им интересно "
             "говорить (игры, аниме, музыка, учёба, работа, спорт…, коротко, 1–3 слова). Ответ — JSON: "
-            '{"люди": [{"имя": "...", "факты": ["..."], "темы": ["..."]}]}. Хозяина зови «брат». Мелочи и разовые '
+            '{"люди": [{"имя": "...", "факты": ["..."], "темы": ["..."]}]}. Хозяина зови «брат». ' + _genders_note() +
+            ' Мелочи и разовые '
             "реплики — не надо. Если ничего — пустой список.", model=deepseek.FLASH, max_tokens=1500, json_mode=True)
         data = json.loads(raw)
     except Exception:
@@ -330,7 +340,9 @@ def context(present: list[str] | None = None, source: str = "", today_lines: int
         if p.get("последний_раз") and n != OWNER:
             bits.append(f"последний раз: {p['последний_раз'].replace('T', ' ')}")
         if bits:
-            cards.append(f"• {n}: " + " | ".join(bits))
+            g = GENDERS.get(n.lower(), p.get("пол", ""))
+            cards.append(f"• {n}{' (она, о ней — в женском роде)' if g == 'ж' else ' (он)' if g == 'м' else ''}: "
+                         + " | ".join(bits))
     if cards:
         parts.append("Кого ты знаешь:\n" + "\n".join(cards))
     return "\n\n".join(parts)
