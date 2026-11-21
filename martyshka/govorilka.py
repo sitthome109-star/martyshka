@@ -58,6 +58,7 @@ SPEECH_GAP = 0.9          # с: пауза в речи, после которо�
 QUIET_SENTENCE = 2.0      # с: столько тишины после ЗАКОНЧЕННОЙ фразы — и только тогда отвечаем (брат: 2 с)
 QUIET_UNFINISHED = 3.5    # с: столько тишины после оборванной фразы (ждём, что человек ещё договорит)
 PRETHINK_AFTER = 0.6      # с: фраза похожа на законченную — начинаем думать над ответом уже в паузе
+JOIN_GRACE = 4.0          # с: после входа человека в войс его подсветку не считаем речью
 QUIET_MORNI = 4.5         # с: после фраз Морни — она говорит длинно и с паузами между предложениями
 MORNI_NAMES = ("морни", "мурни", "morni")
 TALKING_NOW = lambda: False   # noqa: E731 — main подставляет «кто-то светится в окне Говорилки прямо сейчас»
@@ -574,6 +575,8 @@ class SpeakerWatch:
         self._sig, self._names = None, {}
         self._ocr_busy, self._ocr_at = False, 0.0
         self.last_overlap: list[str] = []
+        self._appeared: dict[str, float] = {}
+        self._last_seen_sig, self._sig_at = None, 0.0     # когда человек появился в комнате (вход подсвечивается — не речь)
         threading.Thread(target=self._loop, daemon=True).start()
 
     @staticmethod
@@ -602,12 +605,16 @@ class SpeakerWatch:
                 # Имена читаем В ФОНЕ, только когда строки поменялись (+ раз в 90 с на случай, если люди поменялись
                 # местами) — слежка за подсветкой при этом не останавливается.
                 sig = tuple(round((y - top) / 23) for y, _ in rows)
+                if sig != self._last_seen_sig:
+                    self._last_seen_sig, self._sig_at = sig, time.time()
                 if (sig != self._sig or time.time() - self._ocr_at > 90) and not self._ocr_busy:
                     self._ocr_busy, self._ocr_at = True, time.time()
                     threading.Thread(target=self._read_names, args=(img, rows, top, sig), daemon=True).start()
                 if self._sig == sig:
                     names = self._names
-                    talking = {names[i] for i, (_, on) in enumerate(rows) if on and i in names}
+                    now = time.time()
+                    talking = {names[i] for i, (_, on) in enumerate(rows) if on and i in names
+                               and now - self._appeared.get(names[i], 0.0) > JOIN_GRACE}
                     self.timeline.append((time.time(), frozenset(n for n in talking if not self._me(n))))
             except Exception as e:
                 _log("ошибка", f"кто говорит: {type(e).__name__}: {e}")
@@ -620,6 +627,11 @@ class SpeakerWatch:
             if len(by_y) == len(rows):
                 names = {i: by_y[y] for i, (y, _) in enumerate(rows)}
                 changed = sorted(names.values()) != sorted(self._names.values())
+                first = not self._names
+                for n in set(names.values()) - set(self._names.values()):
+                    # только что зашёл: Говорилка на пару секунд подсвечивает его строку — это не речь.
+                    # Время входа — момент снимка, когда строк стало больше (а не конец чтения имён)
+                    self._appeared[n] = 0.0 if first else self._sig_at
                 self._names, self._sig = names, sig
                 self.present = [n for n in names.values() if not self._me(n)]
                 self.in_room = True
