@@ -784,7 +784,29 @@ class Listener:
         self.hearing = False                            # кто-то говорит прямо сейчас (чтобы не перебивать)
         self.last_voice_at = 0.0
         self.speaker_now = None                         # кто светится сейчас (SpeakerWatch.current) — режем фразы
+        self.stop_heard = 0.0                           # когда услышали «стоп» (мгновенно, локально, без облака)
+        self._stop_rec = None
+        try:                                            # маленький Vosk на процессоре: распознаёт речь поверх Мартышки
+            from vosk import KaldiRecognizer, Model, SetLogLevel
+            SetLogLevel(-1)
+            # без списка слов: со списком Vosk натягивает любую речь на «стоп» (ложные остановки)
+            self._stop_rec = KaldiRecognizer(Model(str(config.VOSK_DIR)), SR)
+        except Exception as e:
+            _log("ошибка", f"быстрый «стоп» не включился: {e}")
         threading.Thread(target=self._loop, daemon=True).start()
+
+    def _check_stop(self, block: np.ndarray) -> None:
+        """Пока Мартышка говорит — каждый кусочек звука сразу в Vosk: «стоп/хватит/заткнись» → stop_heard."""
+        if self._stop_rec is None:
+            return
+        pcm = (np.clip(block, -1, 1) * 32767).astype("<i2").tobytes()
+        if self._stop_rec.AcceptWaveform(pcm):
+            text = json.loads(self._stop_rec.Result()).get("text", "")
+        else:
+            text = json.loads(self._stop_rec.PartialResult()).get("partial", "")
+        if re.search(r"\b(стоп|хватит|заткнись|замолчи|помолчи)\b", text):
+            self.stop_heard = time.time()
+            self._stop_rec.Reset()
 
     def _prob(self, window: np.ndarray) -> float:
         n = (len(window) // 512) * 512
@@ -803,6 +825,10 @@ class Listener:
                 p = self._prob(np.concatenate(recent))
                 speaking_now = p > config.SPEECH_THRESHOLD
                 self.hearing = speaking_now or (heard and silence < 0.5)
+                if self.paused.is_set():                # Мартышка говорит — ловим «стоп» сразу, не дожидаясь паузы
+                    self._check_stop(block)
+                elif self._stop_rec is not None and self.stop_heard >= 0:
+                    self._stop_rec.Reset()
                 if speaking_now:
                     self.last_voice_at = time.time()
                 # пока Мартышка говорит — обычно не слушаем; в режиме диалога слушаем и тогда: если её перебили,
@@ -1189,9 +1215,15 @@ class StopWatcher:
         self._t.start()
 
     def _run(self) -> None:
+        started = time.time()
         while not self._done.is_set():
+            # мгновенный «стоп» от Vosk (локально) — не ждём, пока человек договорит и облако распознает
+            if not self.hit and self.listener.stop_heard > started:
+                self.hit = True
+                self.mouth.stop()
+                _log("система", "услышала «стоп» — замолчала")
             try:
-                item = self.listener.phrases.get(timeout=0.1)
+                item = self.listener.phrases.get(timeout=0.05)
             except queue.Empty:
                 continue
             if len(item) > 3:
@@ -1316,6 +1348,46 @@ def reply_stream(history: list[dict], mouth: "Mouth", anger: int = 0, with_morni
     return re.sub(r"\s+", " ", full).strip()
 
 
+# ---------- К КОМУ ОБРАЩАЮТСЯ ----------
+# Мартышка отвечает, только когда обращаются К НЕЙ: «Мартышка, …» в начале, «…, Мартышка?» в конце,
+# «эй/слушай, Мартышка». Просто упоминание («так Мартышка просто…») — не обращение.
+# Фраза обращена к другому («Морни, …», «Энбулих, …») — слушает и запоминает, но не отвечает.
+_HER = r"(мартыш\w*|мартиш\w*|ртышк\w*|martysh\w*|martish\w*|martisch\w*|martysch\w*)"
+_LEAD = r"(эй|слушай|слышь|ну|а|о|короче|блин|бля|ладно|давай|окей|ok|так\s+вот)"
+TO_HER_RE = re.compile(rf"^\W*({_LEAD}\W+)?{_HER}\b|[,!?.…]\s*{_HER}\s*([,!?.…]|$)|\b{_LEAD}\W+{_HER}\s*[,!?]",
+                       re.I)
+_TRANS = str.maketrans({"а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh", "з": "z",
+                        "и": "i", "й": "i", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r",
+                        "с": "s", "т": "t", "у": "u", "ф": "f", "х": "h", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sh",
+                        "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "u", "я": "a"})
+KNOWN_NAMES: list[str] = []         # кто бывает на сервере (main подставляет: из окна и из памяти)
+
+
+def addressed_to_her(text: str) -> bool:
+    return bool(TO_HER_RE.search((text or "").strip()))
+
+
+def addressed_to_other(text: str) -> str:
+    """Если фраза обращена к другому — его имя (Морни, Энбулих…), иначе пусто."""
+    import difflib
+    t = (text or "").strip().lower()
+    m = re.match(rf"^\W*({_LEAD}\W+)?([\w-]+)\s*[,!?]", t) or re.match(r"^\W*([\w-]+)\W*$", t)
+    first = (m.group(m.lastindex) if m else "") or ""
+    words = re.findall(r"\w+", t)[:3]
+    if any(w.startswith(MORNI_NAMES) or w.startswith(("морн", "мурн")) for w in words[:2]) and not addressed_to_her(t):
+        return "Морни"
+    if not first or re.match(_HER, first):
+        return ""
+    lat = first.translate(_TRANS)
+    for name in KNOWN_NAMES:
+        n = name.lower()
+        if n.startswith(("мартыш", "martysh")):
+            continue
+        if difflib.SequenceMatcher(None, lat, n.translate(_TRANS)).ratio() >= 0.6:
+            return name
+    return ""
+
+
 def should_answer(text: str, last_reply_at: float, chain: int, with_morni: bool = False,
                   same_speaker: bool = False) -> tuple[bool, int]:
     """Ответить ли на услышанное. Возвращает (ответить, новая длина цепочки ответов без имени).
@@ -1323,8 +1395,10 @@ def should_answer(text: str, last_reply_at: float, chain: int, with_morni: bool 
     Главное правило (просьба брата): Мартышка откликается ТОЛЬКО когда её позвали по имени.
     Дальше — «режим диалога»: тот собеседник, который её позвал, может продолжать и без имени
     (config.GOVORILKA_FOLLOWUP секунд, не больше GOVORILKA_MAX_CHAIN реплик подряд)."""
-    if NAME_RE.search(text):
+    if addressed_to_her(text):
         return True, 0
+    if addressed_to_other(text):                     # обращаются к другому — слушаем, не отвечаем
+        return False, chain
     # с Морни разговор может быть длиннее, а дебаты — ещё длиннее
     limit = config.GOVORILKA_MAX_CHAIN * (5 if (with_morni and debate_on()) else 2 if with_morni else 1)
     # разговор с Морни (брат сам попросил) — её реплики принимаем без имени
@@ -1482,6 +1556,12 @@ def main() -> None:
                         break
                 if watch.present:
                     st["present"] = list(watch.present)
+                    # кто бывает на сервере — чтобы понять, что фраза обращена к другому («Энбулих, …»)
+                    try:
+                        from . import longmem
+                        KNOWN_NAMES[:] = sorted(set(watch.present) | set(longmem.people().keys()))
+                    except Exception:
+                        KNOWN_NAMES[:] = list(watch.present)
                 for item in chunks:
                     chunk, c_t0, c_t1 = item[:3]
                     text = item[3] if len(item) > 3 else _hear(chunk, HALLUCINATIONS)
@@ -1570,7 +1650,7 @@ def main() -> None:
                              "можешь вспомнить что-то из прошлых разговоров)", mouth, listener, st, initiative=True)
                 # в войсе давно тихо, а люди сидят — сама решает, заговорить ли (о том, что им интересно)
                 people = [n for n in (roster or set())]
-                if (getattr(config, "GOVORILKA_CHIME", True) and watch.in_room and people and not pending
+                if (getattr(config, "GOVORILKA_CHIME", False) and watch.in_room and people and not pending
                         and not listener.hearing and quiet_for > QUIET_TALK_AFTER
                         and time.time() - last_quiet_talk > QUIET_TALK_EVERY):
                     last_quiet_talk = time.time()
@@ -1684,7 +1764,7 @@ def _predict(text: str, speaker: str, st: dict) -> list[dict] | None:
     from . import longmem
     who = _who_of(speaker, st)
     now = time.time()
-    named = bool(NAME_RE.search(text))
+    named = addressed_to_her(text)
     same = named or (bool(st.get("dialog_with")) and who == st.get("dialog_with") and now < st.get("dialog_until", 0))
     asked = bool(MORNI_TALK_RE.search(text)) and (named or now - st["last_reply_at"] < config.GOVORILKA_FOLLOWUP)
     morni_until = st["morni_until"]
@@ -1786,7 +1866,10 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
     history.append({"role": "user", "content": f"({who}): {text}"})
     if speaker.lower().startswith(("морни", "мурни", "morni")):
         st["morni_until"] = max(st["morni_until"], time.time() + MORNI_MINUTES * 60)
-    named = bool(NAME_RE.search(text))
+    named = addressed_to_her(text)
+    to_other = "" if named else addressed_to_other(text)
+    if to_other:
+        _log("система", f"это к {to_other} — слушаю, не отвечаю")
     # режим диалога: кто позвал по имени — тому Мартышка и отвечает дальше без обращения
     if named:
         st["dialog_with"] = who if who != SERVER else st.get("dialog_with", "")
@@ -1813,7 +1896,7 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
     # САМА РЕШАЕТ, КОГДА ВМЕШАТЬСЯ: её не звали, но иногда (не чаще CHIME_EVERY) она прислушивается — и если
     # правда есть что сказать к месту, вступает; иначе молчит ([МОЛЧУ]). Говорит только в тишине — не перебивает.
     note = ""
-    if (not ok and getattr(config, "GOVORILKA_CHIME", True) and len(text) > 20 and not with_morni
+    if (not ok and getattr(config, "GOVORILKA_CHIME", False) and len(text) > 20 and not with_morni
             and time.time() - max(st["last_reply_at"], st.get("last_chime", 0.0)) > CHIME_EVERY):
         import random
         if random.random() < CHIME_CHANCE:

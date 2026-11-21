@@ -474,7 +474,7 @@ class Api:
                 "nick": config.GOVORILKA_NICK, "log": g.recent_log(40), "dialog": bool(config.GOVORILKA_DIALOG),
                 "fish_model": getattr(config, "GOVORILKA_FISH_MODEL", "") or "", "fish_models": fish_models(),
                 "greet": bool(getattr(config, "GOVORILKA_GREET", True)),
-                "chime": bool(getattr(config, "GOVORILKA_CHIME", True))}
+                "chime": bool(getattr(config, "GOVORILKA_CHIME", False))}
 
     def gov_action(self, action: str, value=None) -> dict:
         from .. import govorilka as g
