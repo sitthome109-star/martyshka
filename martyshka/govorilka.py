@@ -59,7 +59,11 @@ QUIET_SENTENCE = 2.0      # с: столько тишины после ЗАКО�
 QUIET_UNFINISHED = 3.5    # с: столько тишины после оборванной фразы (ждём, что человек ещё договорит)
 PRETHINK_AFTER = 0.6      # с: фраза похожа на законченную — начинаем думать над ответом уже в паузе
 JOIN_GRACE = 4.0          # с: после входа человека в войс его подсветку не считаем речью
-QUIET_MORNI = 4.5         # с: после фраз Морни — она говорит длинно и с паузами между предложениями
+QUIET_MORNI = 6.0         # с: после фраз Морни — она говорит длинно и с паузами (готовит следующее предложение)
+QUIET_THINKING = 12.0     # с: человек сказал «дай подумать / щас / секунду / хм» — ждём продолжения, не влезаем
+# короткая «думающая» реплика целиком (без содержания) — это не конец ответа
+THINKING_RE = re.compile(r"^\W*(?:\w+\W+){0,2}(дай(те)?\s*подума\w*|щас|сейчас|секунд\w*|сек|момент\w*|минут\w*|"
+                         r"погоди\w*|подожди\w*|ща|хм+|э+м*|м+|ну+|так+|слушай|короче|значит|ммм|вот)\W*$", re.I)
 MORNI_NAMES = ("морни", "мурни", "morni")
 TALKING_NOW = lambda: False   # noqa: E731 — main подставляет «кто-то светится в окне Говорилки прямо сейчас»
 QUIET_FORGET = 20.0       # с: фраза так и не к нам — забываем, чтобы не приклеилась к следующей
@@ -2034,6 +2038,8 @@ def main() -> None:
                     from_morni = pending_who.lower().startswith(MORNI_NAMES) or (
                         not pending_who and time.time() < st["morni_until"])
                     need = QUIET_MORNI if from_morni else (QUIET_SENTENCE if finished else QUIET_UNFINISHED)
+                    if THINKING_RE.search(pending):          # «дай подумать», «щас», «хм» — сейчас продолжит
+                        need = max(need, QUIET_THINKING)
                     morni_busy = from_morni and watch.lit_within(QUIET_MORNI - 1.0, MORNI_NAMES)
                     if quiet >= need and not morni_busy and not watch.current():
                         text, pending = pending, ""
