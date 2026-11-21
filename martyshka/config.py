@@ -204,6 +204,7 @@ VOICE_OUTPUT_DEVICE = None
 #  То, что поменяли в ОКНЕ НАСТРОЕК, хранится в data/settings.json и
 #  перекрывает значения выше. (Здесь ничего менять не нужно.)
 # ======================================================================
+UI_THEME = "cyan"                    # тема окна чата: cyan | violet | emerald | graphite
 SETTINGS_FILE = DATA_DIR / "settings.json"
 
 

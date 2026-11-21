@@ -6,36 +6,55 @@
 <title>Мартышка</title>
 <style>
 :root{
-  --bg:#0c0c0f; --text:#ececf1; --muted:#9a9aa6; --dim:#62626e; --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.14);
-  --card:rgba(32,32,38,.78); --acc:#8b6cf6; --acc2:#a47ff7; --ok:#3ddc97; --bad:#ff6b7a;
+  --bg:#090c12; --text:#eef2f8; --muted:#9aa5b8; --dim:#626d80; --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.14);
+  --card:rgba(18,22,32,.62); --glass:rgba(20,24,34,.66); --acc:#1698ff; --acc2:#45caff; --acc-rgb:22,152,255; --link:#7ad4ff;
+  --ok:#3ddc97; --bad:#ff6b7a;
+}
+[data-theme="violet"]{
+  --bg:#0c0c0f; --card:rgba(28,26,38,.64); --glass:rgba(28,26,38,.68);
+  --acc:#8b6cf6; --acc2:#a47ff7; --acc-rgb:139,108,246; --link:#b9a3ff;
+}
+[data-theme="emerald"]{
+  --bg:#08100e; --card:rgba(16,28,25,.64); --glass:rgba(16,28,25,.68);
+  --acc:#10b981; --acc2:#34d399; --acc-rgb:16,185,129; --link:#6ee7b7;
+}
+[data-theme="graphite"]{
+  --bg:#0b0c0e; --card:rgba(26,28,32,.68); --glass:rgba(26,28,32,.74);
+  --acc:#64748b; --acc2:#94a3b8; --acc-rgb:148,163,184; --link:#cbd5e1;
 }
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14.5px/1.55 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;overflow:hidden}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14.5px/1.58 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;overflow:hidden;transition:background .3s}
 button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 input,select,textarea{font:inherit;color:var(--text)}
-::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px}
-::selection{background:rgba(139,108,246,.4)}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:8px}
+::selection{background:rgba(var(--acc-rgb),.38)}
 
-#smoke{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:.55;filter:grayscale(1) contrast(1.25) brightness(.55)}
-body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(90% 70% at 50% 40%,transparent 30%,rgba(8,8,10,.85) 100%)}
+#smoke{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:.52;filter:grayscale(1) contrast(1.25) brightness(.52)}
+body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:radial-gradient(65% 55% at 50% 18%,rgba(var(--acc-rgb),.11) 0%,transparent 65%),
+             radial-gradient(90% 70% at 50% 45%,transparent 30%,rgba(6,8,12,.86) 100%)}
 
-nav.top{position:relative;z-index:3;height:56px;display:flex;justify-content:center;align-items:stretch;gap:6px;border-bottom:1px solid var(--line);background:rgba(14,14,17,.55);backdrop-filter:blur(14px)}
-nav.top button{display:flex;align-items:center;gap:8px;padding:0 14px;color:var(--muted);font-weight:600;font-size:14px;border-bottom:2px solid transparent;transition:.15s}
-nav.top button svg{width:17px;height:17px}
-nav.top button:hover{color:#fff}
-nav.top button.on{color:#fff;border-bottom-color:#fff}
+nav.top{position:relative;z-index:3;height:56px;display:flex;justify-content:center;align-items:stretch;gap:6px;border-bottom:1px solid var(--line);background:rgba(12,14,20,.58);backdrop-filter:blur(18px) saturate(1.25)}
+nav.top button.navb{display:flex;align-items:center;gap:8px;padding:0 14px;color:var(--muted);font-weight:600;font-size:14px;border-bottom:2px solid transparent;transition:.15s}
+nav.top button.navb svg{width:17px;height:17px}
+nav.top button.navb:hover{color:#fff}
+nav.top button.navb.on{color:#fff;border-bottom-color:var(--acc2)}
+.theme-pick{position:absolute;right:14px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:20px;background:rgba(255,255,255,.04);border:1px solid var(--line)}
+.theme-pick button{width:14px;height:14px;border-radius:50%;border:2px solid transparent;transition:.18s;padding:0}
+.theme-pick button:hover{transform:scale(1.18)}
+.theme-pick button.on{border-color:#fff;box-shadow:0 0 10px rgba(var(--acc-rgb),.8)}
 
 .page{position:relative;z-index:1;height:calc(100% - 56px);display:none;flex-direction:column}
 .page.on{display:flex}
 
 .hero{flex:none;text-align:center;padding:22px 20px 8px}
 .hero h1{margin:0;font-size:54px;font-weight:800;letter-spacing:-1px;line-height:1.05;
-  background:linear-gradient(180deg,#fff 0%,#c9c9d2 55%,#8e8e99 100%);-webkit-background-clip:text;color:transparent;display:inline-flex;align-items:flex-start;gap:2px}
-.hero h1 .star{width:26px;height:26px;margin-top:-2px}
+  background:linear-gradient(180deg,#fff 0%,#d7e2f0 58%,#8d9ab0 100%);-webkit-background-clip:text;color:transparent;display:inline-flex;align-items:flex-start;gap:2px}
+.hero h1 .star{width:26px;height:26px;margin-top:-2px;fill:var(--acc2);filter:drop-shadow(0 0 10px rgba(var(--acc-rgb),.7))}
 .hero .sub{color:var(--muted);margin:6px 0 16px;font-size:15px}
 .hero .btns{display:flex;gap:10px;justify-content:center}
-.hb{display:flex;align-items:center;gap:8px;height:40px;padding:0 18px;border-radius:12px;background:rgba(30,30,36,.85);border:1px solid var(--line2);font-weight:650;transition:.15s}
-.hb:hover{background:rgba(48,48,58,.9)}
+.hb{display:flex;align-items:center;gap:8px;height:40px;padding:0 18px;border-radius:12px;background:var(--glass);border:1px solid var(--line2);box-shadow:inset 0 1px 0 rgba(255,255,255,.07);backdrop-filter:blur(16px);font-weight:650;transition:.15s}
+.hb:hover{background:rgba(255,255,255,.1);border-color:rgba(var(--acc-rgb),.45)}
 .hb svg{width:17px;height:17px}
 .hb.live{border-color:rgba(61,220,151,.5);box-shadow:0 0 0 3px rgba(61,220,151,.12)}
 .hb.live .ldot{display:inline-block}
@@ -43,38 +62,46 @@ nav.top button.on{color:#fff;border-bottom-color:#fff}
 .hero .clock{margin-top:12px;color:var(--muted);font-size:13px}.hero .clock b{color:#fff;margin-right:6px}
 
 .bar{flex:none;width:min(860px,calc(100% - 40px));margin:8px auto 8px;display:flex;align-items:center;gap:10px}
-.chip{display:flex;align-items:center;gap:7px;height:36px;padding:0 13px;border-radius:10px;background:rgba(30,30,36,.85);border:1px solid var(--line2);font-weight:600;font-size:13.5px;white-space:nowrap}
-.chip:hover{background:rgba(48,48,58,.9)}
+.chip{display:flex;align-items:center;gap:7px;height:36px;padding:0 13px;border-radius:10px;background:var(--glass);border:1px solid var(--line2);box-shadow:inset 0 1px 0 rgba(255,255,255,.06);backdrop-filter:blur(14px);font-weight:600;font-size:13.5px;white-space:nowrap}
+.chip:hover{background:rgba(255,255,255,.1);border-color:rgba(var(--acc-rgb),.4)}
 .bar label{color:var(--muted);font-size:13px;white-space:nowrap}
-.sel{flex:1;height:36px;border-radius:10px;background:rgba(30,30,36,.85);border:1px solid var(--line2);padding:0 12px;outline:none;cursor:pointer;min-width:0}
-.sel option{background:#1d1d22}
-.accbtn{width:40px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(139,108,246,.35)}
+.sel{flex:1;height:36px;border-radius:10px;background:var(--glass);border:1px solid var(--line2);box-shadow:inset 0 1px 0 rgba(255,255,255,.06);backdrop-filter:blur(14px);padding:0 12px;outline:none;cursor:pointer;min-width:0}
+.sel option{background:#181c26}
+.accbtn{width:40px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(var(--acc-rgb),.38)}
 .accbtn svg{width:17px;height:17px}
 
-#scroll{flex:1;overflow:auto;min-height:0}
-#thread{width:min(860px,calc(100% - 40px));margin:0 auto;padding:6px 0 30px}
+#scroll{flex:1;overflow:auto;min-height:0;position:relative}
+#thread{width:min(860px,calc(100% - 40px));margin:0 auto;padding:8px 0 36px}
 .empty{color:var(--muted);text-align:center;margin-top:5vh}
 .sugs{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px}
-.sg{padding:8px 13px;border-radius:20px;background:rgba(30,30,36,.85);border:1px solid var(--line2);font-size:13px;color:#d6d6de}
-.sg:hover{background:rgba(48,48,58,.9)}
+.sg{padding:8px 14px;border-radius:20px;background:var(--glass);border:1px solid var(--line2);backdrop-filter:blur(12px);font-size:13px;color:#d6dced;transition:.15s}
+.sg:hover{background:rgba(var(--acc-rgb),.18);border-color:rgba(var(--acc-rgb),.5);color:#fff}
 
-.mu{display:flex;justify-content:flex-end;margin:14px 0}
-.mu .b{max-width:72%;background:linear-gradient(135deg,#8a6cf5,#a07bf7);color:#fff;padding:10px 14px 7px;border-radius:16px 16px 5px 16px;white-space:pre-wrap;word-wrap:break-word;box-shadow:0 6px 20px rgba(139,108,246,.25)}
-.meta{display:flex;justify-content:flex-end;align-items:center;gap:4px;font-size:11.5px;opacity:.75;margin-top:3px}
+.mu{display:flex;justify-content:flex-end;margin:16px 0}
+.mu .b{max-width:74%;background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;padding:11px 16px 8px;border-radius:18px 18px 5px 18px;white-space:pre-wrap;word-wrap:break-word;box-shadow:0 8px 24px rgba(var(--acc-rgb),.26)}
+.meta{display:flex;justify-content:flex-end;align-items:center;gap:4px;font-size:11.5px;opacity:.75;margin-top:4px}
 .meta svg{width:11px;height:11px}
-.ma{display:flex;margin:14px 0}
-.ma .b{max-width:86%;min-width:120px;background:var(--card);border:1px solid var(--line2);padding:11px 15px 7px;border-radius:16px 16px 16px 5px;backdrop-filter:blur(10px);word-wrap:break-word}
+.ma{display:flex;align-items:flex-start;gap:11px;margin:16px 0}
+.orb-dot{flex:none;width:28px;height:28px;margin-top:4px;border-radius:50%;position:relative;
+  background:radial-gradient(circle at 34% 30%,#e6f7ff 0%,var(--acc2) 32%,var(--acc) 68%,rgba(var(--acc-rgb),.18) 100%);
+  box-shadow:0 0 14px rgba(var(--acc-rgb),.48), inset 0 0 6px rgba(255,255,255,.45);transition:.25s}
+.ma.thinking .orb-dot{animation:orbPulse 1.5s ease-in-out infinite}
+@keyframes orbPulse{
+  0%,100%{transform:scale(.94);box-shadow:0 0 12px rgba(var(--acc-rgb),.5),0 0 0 0 rgba(var(--acc-rgb),.38)}
+  50%{transform:scale(1.08);box-shadow:0 0 22px rgba(var(--acc-rgb),.85),0 0 0 8px rgba(var(--acc-rgb),0)}
+}
+.ma .b{max-width:calc(88% - 39px);min-width:120px;background:var(--card);border:1px solid var(--line2);box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 8px 28px rgba(0,0,0,.22);padding:13px 17px 9px;border-radius:18px 18px 18px 5px;backdrop-filter:blur(18px) saturate(1.25);word-wrap:break-word}
 .ma .meta{color:var(--muted)}
 
-.md p{margin:0 0 8px}.md p:last-child{margin-bottom:0}
+.md p{margin:0 0 9px}.md p:last-child{margin-bottom:0}
 .md h1,.md h2,.md h3{margin:12px 0 6px;line-height:1.3}.md h1{font-size:19px}.md h2{font-size:16.5px}.md h3{font-size:15px}
 .md ul,.md ol{margin:4px 0 8px;padding-left:22px}.md li{margin:2px 0}
 .md code{background:rgba(0,0,0,.35);border:1px solid var(--line);padding:1px 6px;border-radius:6px;font:13px Consolas,"Cascadia Code",monospace;color:#ffd08a}
-.md a{color:#b9a3ff;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
-.md blockquote{margin:6px 0;padding:5px 12px;border-left:3px solid var(--acc);color:#cfcfd8;background:rgba(139,108,246,.08);border-radius:0 8px 8px 0}
+.md a{color:var(--link);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.md blockquote{margin:6px 0;padding:5px 12px;border-left:3px solid var(--acc);color:#cfcfd8;background:rgba(var(--acc-rgb),.09);border-radius:0 8px 8px 0}
 .md table{border-collapse:collapse;margin:8px 0;font-size:13.5px;display:block;overflow:auto}
 .md th,.md td{border:1px solid var(--line2);padding:5px 10px;text-align:left}.md th{background:rgba(255,255,255,.05)}
-.code{margin:8px 0;border:1px solid var(--line2);border-radius:10px;overflow:hidden;background:rgba(0,0,0,.45)}
+.code{margin:8px 0;border:1px solid var(--line2);border-radius:11px;overflow:hidden;background:rgba(6,8,14,.55)}
 .code .cb{display:flex;justify-content:space-between;align-items:center;padding:5px 12px;background:rgba(255,255,255,.05);color:var(--muted);font-size:12px}
 .code .cb button{color:var(--muted);font-size:12px;padding:2px 8px;border-radius:6px}.code .cb button:hover{color:#fff;background:rgba(255,255,255,.08)}
 .code pre{margin:0;padding:10px 13px;overflow:auto;font:13px/1.5 Consolas,"Cascadia Code",monospace;color:#dcdce6;max-height:480px}
@@ -103,9 +130,9 @@ nav.top button.on{color:#fff;border-bottom-color:#fff}
 .st .sx .dt{display:none;white-space:pre-wrap;font:12px/1.45 Consolas,monospace;color:#9d9daa;background:rgba(0,0,0,.3);border-radius:7px;padding:6px 8px;margin-top:4px;max-height:220px;overflow:auto}
 .st.open .sx .dt:not(:empty){display:block}
 .st img{display:block;max-width:100%;max-height:260px;border-radius:8px;margin-top:6px;cursor:zoom-in}
-.st .fl{color:#b9a3ff;cursor:pointer;font-size:12px;margin-top:3px}
+.st .fl{color:var(--link);cursor:pointer;font-size:12px;margin-top:3px}
 .st.think .lb,.st.note .lb{color:var(--muted)}
-.plan{margin:4px 0 6px;padding:7px 9px;border-radius:9px;background:rgba(139,108,246,.07);border:1px solid rgba(139,108,246,.2)}
+.plan{margin:4px 0 6px;padding:7px 9px;border-radius:9px;background:rgba(var(--acc-rgb),.08);border:1px solid rgba(var(--acc-rgb),.24)}
 .plan .pt{font-size:12px;color:var(--muted);margin-bottom:3px}
 .pi{display:flex;gap:8px;align-items:flex-start;font-size:13px;padding:2px 0;color:#cfcfd8}
 .pi .bx{flex:none;width:15px;height:15px;border-radius:4px;border:2px solid #4a4a58;margin-top:3px;display:flex;align-items:center;justify-content:center}
@@ -115,18 +142,26 @@ nav.top button.on{color:#fff;border-bottom-color:#fff}
 .spin{width:13px;height:13px;border:2px solid rgba(255,255,255,.15);border-top-color:var(--acc2);border-radius:50%;animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
 
+#toBottom{position:fixed;left:50%;bottom:108px;transform:translateX(-50%) translateY(14px);height:32px;padding:0 14px;border-radius:20px;background:var(--glass);border:1px solid rgba(var(--acc-rgb),.45);color:#fff;font-size:12.5px;font-weight:600;backdrop-filter:blur(14px);box-shadow:0 8px 24px rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:.2s;z-index:6}
+#toBottom.show{opacity:1;pointer-events:auto;transform:translateX(-50%) translateY(0)}
+#toBottom:hover{background:rgba(var(--acc-rgb),.28)}
+
 .composer{flex:none;width:min(860px,calc(100% - 40px));margin:0 auto 6px}
-.box{display:flex;align-items:flex-end;gap:6px;background:rgba(30,30,36,.9);border:1px solid var(--line2);border-radius:16px;padding:8px 8px 8px 10px;backdrop-filter:blur(14px)}
-.box:focus-within{border-color:rgba(139,108,246,.55)}
-.ib{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#bdbdc8;flex:none}
-.ib:hover{background:rgba(255,255,255,.07);color:#fff}
+.box{display:flex;align-items:flex-end;gap:6px;background:var(--glass);border:1px solid var(--line2);box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 10px 30px rgba(0,0,0,.28);border-radius:16px;padding:8px 8px 8px 10px;backdrop-filter:blur(18px) saturate(1.25)}
+.box:focus-within{border-color:rgba(var(--acc-rgb),.6);box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 0 0 3px rgba(var(--acc-rgb),.12)}
+.ib{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#bdbdc8;flex:none;transition:.15s}
+.ib:hover{background:rgba(255,255,255,.08);color:#fff}
 .ib svg{width:18px;height:18px}
-.ib.on{color:#fff;background:rgba(139,108,246,.25)}
+.ib.on{color:#fff;background:rgba(var(--acc-rgb),.28)}
 .ib.rec{color:#fff;background:#d6455a;animation:pulse 1.2s infinite}
 @keyframes pulse{50%{box-shadow:0 0 0 6px rgba(214,69,90,.2)}}
-.box input.vol{width:86px;flex:none;align-self:center;accent-color:var(--acc);margin:0 4px}
-.box textarea{flex:1;min-width:0;background:none;border:0;outline:none;resize:none;max-height:36vh;min-height:24px;line-height:1.5;padding:7px 6px}
-#send{width:46px;height:36px;border-radius:11px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 4px 14px rgba(139,108,246,.35)}
+.vol-wrap{position:relative;display:flex;align-items:center}
+.vol-pop{position:absolute;bottom:100%;left:50%;transform:translateX(-50%) translateY(6px);margin-bottom:8px;padding:9px 12px;border-radius:12px;background:rgba(16,20,28,.94);border:1px solid var(--line2);backdrop-filter:blur(16px);box-shadow:0 12px 30px rgba(0,0,0,.5);display:flex;align-items:center;gap:8px;opacity:0;pointer-events:none;transition:.18s;white-space:nowrap;z-index:12}
+.vol-wrap:hover .vol-pop,.vol-wrap:focus-within .vol-pop{opacity:1;pointer-events:auto;transform:translateX(-50%) translateY(0)}
+.vol-pop small{font-size:11.5px;color:var(--muted)}
+.vol-pop input.vol{width:96px;accent-color:var(--acc);margin:0}
+.box textarea{flex:1;min-width:0;background:none;border:0;outline:none;resize:none;max-height:36vh;min-height:24px;line-height:1.5;padding:7px 8px}
+#send{width:46px;height:36px;border-radius:11px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 4px 16px rgba(var(--acc-rgb),.38)}
 #send:disabled{opacity:.45;cursor:default;box-shadow:none}
 #send.stop{background:#5a2733}
 .hint{width:min(860px,calc(100% - 40px));margin:0 auto 10px;color:var(--dim);font-size:12.3px;display:flex;align-items:center;gap:6px}
@@ -136,7 +171,7 @@ nav.top button.on{color:#fff;border-bottom-color:#fff}
 .inner{width:min(820px,calc(100% - 40px));margin:0 auto;padding:26px 0 60px}
 .inner h2{margin:0 0 4px;font-size:24px}
 .inner .pd{color:var(--muted);margin:0 0 18px}
-.sec{background:var(--card);border:1px solid var(--line2);border-radius:16px;padding:6px 18px;margin:0 0 16px;backdrop-filter:blur(10px)}
+.sec{background:var(--card);border:1px solid var(--line2);box-shadow:inset 0 1px 0 rgba(255,255,255,.06);border-radius:16px;padding:6px 18px;margin:0 0 16px;backdrop-filter:blur(16px) saturate(1.2)}
 .sec>h3{margin:12px 0 2px;font-size:15px}.sec>.sd{color:var(--muted);font-size:12.8px;margin:0 0 4px}
 .field{display:flex;gap:14px;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--line)}
 .field:last-child{border-bottom:0}
@@ -146,9 +181,9 @@ nav.top button.on{color:#fff;border-bottom-color:#fff}
 .field .ctl{flex:none;width:280px;display:flex;justify-content:flex-end;align-items:center;gap:8px}
 .field.wide{flex-direction:column}.field.wide .ctl{width:100%}
 .in{width:100%;height:36px;border-radius:9px;background:rgba(0,0,0,.3);border:1px solid var(--line2);padding:0 11px;outline:none}
-.in:focus{border-color:rgba(139,108,246,.6)}
+.in:focus{border-color:rgba(var(--acc-rgb),.65)}
 textarea.in{height:90px;padding:9px 11px;resize:vertical}
-select.in option{background:#1d1d22}
+select.in option{background:#181c26}
 .tog{width:42px;height:24px;border-radius:20px;background:#34343e;position:relative;transition:.2s;flex:none;cursor:pointer}
 .tog::after{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s}
 .tog.on{background:linear-gradient(135deg,var(--acc),var(--acc2))}.tog.on::after{left:21px}
@@ -174,14 +209,14 @@ input[type=range]{width:100%;accent-color:var(--acc)}
 .note{padding:10px 13px;border-radius:10px;background:rgba(255,193,79,.07);border:1px solid rgba(255,193,79,.25);color:#ffdca0;font-size:13px;margin:0 0 14px}
 .subtabs{display:flex;gap:6px;margin:0 0 14px}
 .subtabs button{padding:7px 14px;border-radius:10px;background:rgba(30,30,36,.85);border:1px solid var(--line2);color:var(--muted);font-weight:600}
-.subtabs button.on{color:#fff;border-color:rgba(139,108,246,.6);background:rgba(139,108,246,.18)}
+.subtabs button.on{color:#fff;border-color:rgba(var(--acc-rgb),.6);background:rgba(var(--acc-rgb),.2)}
 
 .vfilter{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
 .vfilter button{padding:5px 11px;border-radius:20px;border:1px solid var(--line2);color:var(--muted);font-size:12.5px}
-.vfilter button.on{color:#fff;border-color:rgba(139,108,246,.6);background:rgba(139,108,246,.18)}
+.vfilter button.on{color:#fff;border-color:rgba(var(--acc-rgb),.6);background:rgba(var(--acc-rgb),.2)}
 .vlist{display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto;padding-right:4px}
 .v{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:11px;background:rgba(0,0,0,.25);border:1px solid var(--line)}
-.v.sel{border-color:var(--acc);background:rgba(139,108,246,.12)}
+.v.sel{border-color:var(--acc);background:rgba(var(--acc-rgb),.14)}
 .v .play{width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;flex:none}
 .v .play:hover{background:rgba(255,255,255,.14)}.v .play.busy{animation:pulse 1s infinite}
 .v .vn{flex:1;min-width:0}.v .vn b{display:block;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -198,7 +233,7 @@ input[type=range]{width:100%;accent-color:var(--acc)}
 .grp{color:var(--dim);font-size:11.5px;text-transform:uppercase;letter-spacing:.8px;margin:12px 8px 6px}
 .chat{display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:9px;color:#d0d0da;cursor:pointer;font-size:13.5px}
 .chat span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.chat:hover{background:rgba(255,255,255,.05)}.chat.on{background:rgba(139,108,246,.16);color:#fff}
+.chat:hover{background:rgba(255,255,255,.05)}.chat.on{background:rgba(var(--acc-rgb),.18);color:#fff}
 .chat .del{opacity:0;width:22px;height:22px;border-radius:6px;color:var(--muted)}
 .chat:hover .del{opacity:1}.chat .del:hover{color:var(--bad)}
 .drawer .foot{border-top:1px solid var(--line);padding:10px 14px;color:var(--muted);font-size:12px;display:flex;flex-direction:column;gap:3px}
@@ -255,13 +290,19 @@ kbd{font:11px Consolas;padding:1px 6px;border-radius:5px;background:rgba(255,255
 <body>
 <canvas id="smoke"></canvas>
 <nav class="top" id="nav">
-  <button data-p="home" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Главная</span></button>
-  <button data-p="voice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg><span>Голос</span></button>
-  <button data-p="brain"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/><path d="M3.3 7L12 12l8.7-5M12 22V12"/></svg><span>Модель</span></button>
-  <button data-p="gov"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>Говорилка</span></button>
-  <button data-p="memory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a7 7 0 0 0-4 12.7V19h8v-3.3A7 7 0 0 0 12 3zM9 22h6"/></svg><span>Память</span></button>
-  <button data-p="agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg><span>Агент</span></button>
-  <button data-p="system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Настройки</span></button>
+  <button class="navb on" data-p="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Главная</span></button>
+  <button class="navb" data-p="voice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg><span>Голос</span></button>
+  <button class="navb" data-p="brain"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/><path d="M3.3 7L12 12l8.7-5M12 22V12"/></svg><span>Модель</span></button>
+  <button class="navb" data-p="gov"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>Говорилка</span></button>
+  <button class="navb" data-p="memory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a7 7 0 0 0-4 12.7V19h8v-3.3A7 7 0 0 0 12 3zM9 22h6"/></svg><span>Память</span></button>
+  <button class="navb" data-p="agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg><span>Агент</span></button>
+  <button class="navb" data-p="system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Настройки</span></button>
+  <div class="theme-pick" id="themePick" title="Цвет темы окна">
+    <button data-th="cyan" style="background:#1698ff" title="Неон-голубой (под шар)"></button>
+    <button data-th="violet" style="background:#8b6cf6" title="Фиолетовый"></button>
+    <button data-th="emerald" style="background:#10b981" title="Изумруд"></button>
+    <button data-th="graphite" style="background:#7c8a9e" title="Строгий графит"></button>
+  </div>
 </nav>
 
 <section class="page on" id="p-home">
@@ -288,12 +329,15 @@ kbd{font:11px Consolas;padding:1px 6px;border-radius:5px;background:rgba(255,255
     <button class="accbtn" id="bNew" title="Новый чат"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
   </div>
   <div id="scroll"><div id="thread"></div></div>
+  <button id="toBottom" title="Прокрутить вниз">↓ Вниз</button>
   <div class="composer"><div class="slash" id="slash"></div><div class="att" id="att"></div><div class="box">
     <button class="ib" id="bMic" title="Сказать голосом (Ctrl+Shift+Space)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg></button>
     <button class="ib" id="bFile" title="Прикрепить файл или картинку (или перетащи в окно / Ctrl+V)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg></button>
     <button class="ib" id="bSnap" title="Снимок моего экрана (1 клик)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></button>
-    <button class="ib" id="bSpeak" title="Читать ответы вслух"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg></button>
-    <input type="range" class="vol" id="vol" min="0.2" max="2" step="0.05" title="Громкость голоса">
+    <div class="vol-wrap">
+      <button class="ib" id="bSpeak" title="Читать ответы вслух (наведи для громкости)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg></button>
+      <div class="vol-pop"><small>Громкость</small><input type="range" class="vol" id="vol" min="0.2" max="2" step="0.05" title="Громкость голоса"></div>
+    </div>
     <textarea id="input" rows="1" placeholder="Спроси о чём угодно… (/ — команды, Ctrl+V — скриншот)"></textarea>
     <button id="send" disabled title="Отправить (Enter)"></button>
   </div></div>
@@ -430,9 +474,13 @@ const IC={
   gear:'<svg viewBox="0 0 24 24" fill="none" stroke="#b9a3ff" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>'};
 
 // ================= сообщения =================
-const thread=$('#thread'), scroller=$('#scroll'); let stick=true;
-scroller.addEventListener('scroll',()=>{stick=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80});
-const down=()=>{ if(stick) scroller.scrollTop=scroller.scrollHeight };
+const thread=$('#thread'), scroller=$('#scroll'), toBottomBtn=$('#toBottom'); let stick=true;
+scroller.addEventListener('scroll',()=>{
+  stick=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;
+  toBottomBtn.classList.toggle('show', !stick && scroller.scrollHeight-scroller.clientHeight>200);
+});
+toBottomBtn.onclick=()=>{ stick=true; scroller.scrollTo({top:scroller.scrollHeight,behavior:'smooth'}); toBottomBtn.classList.remove('show'); };
+const down=()=>{ if(stick){ scroller.scrollTop=scroller.scrollHeight; toBottomBtn.classList.remove('show'); } };
 const SUGS=['Что было вчера?','Что у меня на экране?','Сделай сайт-визитку и проверь его','Какие новости сегодня?','Напомни через час попить воды'];
 function emptyChat(){ thread.innerHTML=`<div class="empty">Начни разговор — я сама выберу, каким мозгом думать.<div class="sugs">${SUGS.map(q=>`<button class="sg" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div></div>`; }
 function addUser(t,time){ const e=thread.querySelector('.empty'); if(e) e.remove();
@@ -441,8 +489,8 @@ function addUser(t,time){ const e=thread.querySelector('.empty'); if(e) e.remove
 
 // Один ход Мартышки = пузырь: сверху ОДНА свёрнутая строка «что делает» (шаги, мысли, план), ниже — ответ
 function newTurn(){
-  const d=document.createElement('div'); d.className='ma';
-  d.innerHTML=`<div class="b"><div class="steps"><div class="sh"><span class="ic"><span class="spin"></span></span><span class="t shine">Думаю</span><span class="n"></span><span class="chev">${IC.chev}</span></div><div class="sl"><div class="plan" style="display:none"><div class="pt">План</div><div class="pl"></div></div><div class="items"></div></div></div><div class="ans"></div><div class="meta"></div></div>`;
+  const d=document.createElement('div'); d.className='ma thinking';
+  d.innerHTML=`<div class="orb-dot" aria-hidden="true"></div><div class="b"><div class="steps"><div class="sh"><span class="ic"><span class="spin"></span></span><span class="t shine">Думаю</span><span class="n"></span><span class="chev">${IC.chev}</span></div><div class="sl"><div class="plan" style="display:none"><div class="pt">План</div><div class="pl"></div></div><div class="items"></div></div></div><div class="ans"></div><div class="meta"></div></div>`;
   thread.appendChild(d);
   const T={el:d, steps:d.querySelector('.steps'), items:d.querySelector('.items'), ans:d.querySelector('.ans'), meta:d.querySelector('.meta'),
     seg:null, segText:'', think:null, thinkText:'', count:0, plan:[], tools:{}, live:true};
@@ -532,7 +580,7 @@ function addMsgActions(T,rawText){
   };
   T.el.querySelector('.b').insertBefore(bar,T.meta);
 }
-function finishTurn(T,secs,time){ if(!T) return; closeThink(T); closeSeg(T); T.live=false;
+function finishTurn(T,secs,time){ if(!T) return; closeThink(T); closeSeg(T); T.live=false; T.el.classList.remove('thinking');
   if(T.count||T.plan.length||T.items.children.length){ const bad=!!T.ans.querySelector('.err');
     setHead(T, bad?'Остановилась':(T.count?`Готово — ${T.count} ${plural(T.count)}`:'Подумала'), bad?'bad':'ok'); T.steps.classList.remove('open'); }
   else T.steps.remove();
@@ -791,7 +839,7 @@ async function refreshBalance(){ try{ const b=await api().balances(); $('#balDs'
 
 // ================= страницы =================
 let pageTimer=0;
-function show(p){ document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.p===p));
+function show(p){ document.querySelectorAll('#nav button.navb').forEach(b=>b.classList.toggle('on',b.dataset.p===p));
   document.querySelectorAll('.page').forEach(x=>x.classList.toggle('on',x.id==='p-'+p)); clearInterval(pageTimer);
   if(p==='voice') settingsPage('#pv','Голос','Голос Мартышки и как она слушает.',['voice','ears']);
   else if(p==='brain') settingsPage('#pb','Модель','Мозг DeepSeek и характер.',['brain','character']);
@@ -799,7 +847,19 @@ function show(p){ document.querySelectorAll('#nav button').forEach(b=>b.classLis
   else if(p==='system') settingsPage('#ps','Настройки','Шар, запуск и прочее.',['orb','system']);
   else if(p==='gov') renderGov(); else if(p==='memory') renderMemory();
   else if(p==='home') setTimeout(()=>input.focus(),50); }
-document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>show(b.dataset.p));
+document.querySelectorAll('#nav button.navb').forEach(b=>b.onclick=()=>show(b.dataset.p));
+const THEME_NAMES={cyan:'Неон-голубой (под шар)',violet:'Фиолетовый',emerald:'Изумруд',graphite:'Строгий графит'};
+function applyTheme(t){
+  t=THEME_NAMES[t]?t:'cyan';
+  if(t==='cyan') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.dataset.theme=t;
+  document.querySelectorAll('#themePick button').forEach(b=>b.classList.toggle('on',b.dataset.th===t));
+}
+document.querySelectorAll('#themePick button').forEach(b=>b.onclick=async()=>{
+  applyTheme(b.dataset.th);
+  await api().set_theme(b.dataset.th);
+  toast('Тема: '+THEME_NAMES[b.dataset.th]);
+});
 
 let dirty={};
 async function settingsPage(sel,title,desc,keys){ const box=$(sel); dirty={};
@@ -957,6 +1017,7 @@ async function renderMemory(tab){ tab=tab||'people'; const box=$('#pm'); const m
 
 window.addEventListener('pywebviewready', async()=>{
   const r=await api().init();
+  applyTheme(r.theme||'cyan');
   $('#model').value=['auto','flash','pro'].includes(r.brain_mode)?r.brain_mode:'auto';
   st.speak=!!r.chat_speak; $('#bSpeak').classList.toggle('on',st.speak); $('#vol').value=r.volume||1;
   setVoice(r.voice); emptyChat(); refreshChats(); refreshProjects(); refreshBalance(); autosize();

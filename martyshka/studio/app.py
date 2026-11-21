@@ -139,6 +139,7 @@ class Api:
         return {"chats": agent_loop.Chat.list_all(), "name": config.NAME, "ready": deepseek.ready(),
                 "chat_speak": bool(getattr(config, "CHAT_SPEAK", False)), "volume": float(config.VOICE_VOLUME),
                 "brain_mode": (config.BRAIN_MODE or "auto").replace("deepseek-v4-", "").replace("deepseek-", ""),
+                "theme": getattr(config, "UI_THEME", "cyan") or "cyan",
                 "color": config.FACE_COLORS.get(color, color), "tab": self._tab, **self.status_dots()}
 
     def status_dots(self) -> dict:
@@ -158,6 +159,12 @@ class Api:
         from .. import settings_schema
         settings_schema.save({"BRAIN_MODE": mode if mode in ("auto", "flash", "pro") else "auto"})
         return {"ok": True}
+
+    def set_theme(self, theme: str) -> dict:
+        from .. import settings_schema
+        t = theme if theme in ("cyan", "violet", "emerald", "graphite") else "cyan"
+        settings_schema.save({"UI_THEME": t})
+        return {"ok": True, "theme": t}
 
     def voice_set(self, on: bool) -> dict:
         """Кнопка «Говорить»: включить или выключить голосового помощника (и запомнить выбор)."""

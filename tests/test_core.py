@@ -277,9 +277,14 @@ class TestNewStudioAndTelegramFeatures(unittest.TestCase):
         self.assertGreater(p_ang["speed"], 1.0)
         self.assertLess(p_wh["speed"], 1.0)
         self.assertGreaterEqual(p_wh["temperature"], 0.9)
-        # mood_pick включает Drama 3 для шёпота/хохота/драмы
-        _, _, mdl = fish.mood_pick("[хохочет] Ха-ха!", "v1", fish.FREE, anger=0)
-        self.assertEqual(mdl, fish.DRAMA)
+        # mood_pick включает Drama 3 для шёпота/хохота/драмы (когда MOOD_VOICE включён)
+        orig_mv = fish.config.MOOD_VOICE
+        try:
+            fish.config.MOOD_VOICE = True
+            _, _, mdl = fish.mood_pick("[хохочет] Ха-ха!", "v1", fish.FREE, anger=0)
+            self.assertEqual(mdl, fish.DRAMA)
+        finally:
+            fish.config.MOOD_VOICE = orig_mv
 
     def test_chat_diff_pop_turn_and_drop_file(self):
         import base64
