@@ -909,6 +909,7 @@ class Mouth:
         self.fillers: dict = {}
         self._filler_voice = ""
         self.anger = 0                                       # злость на того, кому отвечает (голос под настроение)
+        self.singing = False                                 # поёт — уступает только «стопу» или долгой речи
         self.stopped = threading.Event()                     # «замолчи» — кто-то заговорил поверх
         threading.Thread(target=self._synth_loop, daemon=True).start()
         threading.Thread(target=self._play_loop, daemon=True).start()
@@ -986,7 +987,7 @@ class Mouth:
                 return True
             if config.GOVORILKA_DIALOG and not ECHO["heard_self"] and listener.hearing:
                 talk_since = talk_since or time.time()
-                if time.time() - talk_since >= YIELD_AFTER:
+                if time.time() - talk_since >= (2.5 if self.singing else YIELD_AFTER):   # песню — не от шума
                     self.stop()
                     return True
             else:
@@ -1094,6 +1095,7 @@ def system_prompt(anger: int = 0, with_morni: bool = False, who: str = "", prese
             "сама), спорить или соглашаться, о чём спросить. У тебя своё мнение и характер, ты помнишь людей и "
             "прошлые разговоры и сама вспоминаешь их к месту, ты развиваешься. Говоришь вслух: без списков, "
             "markdown и эмодзи, на языке собеседника. Не повторяйся. Не обсуждай личные данные брата.\n"
+            "Здесь со всеми на «ты», никаких «сэр» (это манера другого режима, не Говорилки). "
             "Морни — девушка (о ней всегда в женском роде: «она сказала», «ты сама»). Она говорит длинно, с паузами "
             "между предложениями — дослушивай её до конца, не перебивай. "
             "Морни — бот, она слышит только фразы, которые НАЧИНАЮТСЯ с её имени: обращаешься к Морни — ВСЕГДА "
@@ -1835,10 +1837,13 @@ def _speak_own(instruction: str, mouth, listener, st, who: str = "", tag: str = 
     return answer
 
 
+SING_REQ_RE = re.compile(r"\b(спой|спей|спойте|спеть|напой|исполни|пропой)\w*\b(?:.{0,20}?\b(?:песн\w*|частушк\w*|"
+                         r"куплет\w*|рэп\w*|гимн\w*)\b)?(?:.{0,15}?\b(?:про|о|об|для)\s+(?P<who>[\w-]+(?:\s+[\w-]+)?))?",
+                         re.I)
 APOLOGY_RE = re.compile(r"(извин|прости|сорян|сори|sorry|не обижайся|был[аи]? неправ|погорячил)", re.I)
 
 
-def _apply_tone(raw: str, who: str, heard: str, anger: int, hurt: int = 0) -> int:
+def _apply_tone(raw: str, who: str, heard: str, anger: int, hurt: int = 0, rated: bool = False) -> int:
     """Метка [ТОН: n] → злость на who. Остывает не больше чем на 1 за реплику; до 0 — только после извинения.
     hurt — оценка обиды быстрым мозгом: задели — злость не меньше «было + обида» (мозг ответа бывает слишком мягок)."""
     from . import longmem
@@ -1848,6 +1853,8 @@ def _apply_tone(raw: str, who: str, heard: str, anger: int, hurt: int = 0) -> in
     new = int(tone.group(1)) if tone else anger
     if hurt:
         new = max(new, anger + hurt)
+    elif rated and new > anger:
+        new = anger                                      # обиды не было (попросили спеть и т.п.) — злость не растёт
     if new < anger - 1 and not APOLOGY_RE.search(heard or ""):
         new = anger - 1                                  # сразу не прощает
     new = longmem.set_anger(who, new)
@@ -1862,7 +1869,9 @@ def _rate_offense(text: str, who: str) -> int:
     try:
         raw = deepseek.ask(
             f"Фраза на голосовом сервере (сказал {who}): «{text}»\nМартышка — ИИ-девушка на этом сервере. "
-            "Это издёвка, унижение, грубая шутка, оскорбление или провокация в адрес Мартышки? Ответ JSON: "
+            "Это издёвка, унижение, грубая шутка, оскорбление или провокация в адрес Мартышки? Просьбы и команды "
+            "(спой, расскажи, сделай, ответь, замолчи) — это НЕ обида, даже если сказаны коротко или с ошибками "
+            "распознавания речи. Ответ JSON: "
             '{"обида": 0|1|2} (0 — нет, нейтрально или по-доброму; 1 — подкол, насмешка; 2 — грубо, унизительно, '
             "оскорбление).", model=deepseek.FLASH, max_tokens=30, json_mode=True)
         return max(0, min(2, int(json.loads(raw).get("обида") or 0)))
@@ -1995,6 +2004,17 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
             note = ("Тебя сейчас НЕ звали — это разговор людей между собой. Вмешайся, только если правда есть "
                     "что сказать к месту: смешная реплика, ответ на вопрос, который ты знаешь, своё мнение в споре, "
                     "тема, которую человек любит. Коротко, по-живому. Если нечего — ответь ровно [МОЛЧУ].")
+    # ПЕСНЯ ПО ПРОСЬБЕ: «Мартышка, спой (спей) песню про Морни» — поёт сразу, без отказов и отговорок
+    song = SING_REQ_RE.search(text) if ok else None
+    if song:
+        about = (song.group("who") or "").strip(" .,!?")
+        note = ("Тебя ПРЯМО СЕЙЧАС попросили спеть" + (f" песню про {about}" if about else "") + ". Спой сразу — "
+                "без отказов, торговли и разговоров о том, что уже пела (не выдумывай: что не пела — не пела). "
+                "Сочини свою песню: два куплета и припев, с рифмами, смешно и по-дружески — из того, что помнишь о "
+                "человеке (характер, привычки, любимые темы, случаи с сервера). Начни с {поёт, …}; до песни — "
+                "максимум одна короткая фраза. Злость можешь вложить в песню, но спой.")
+        mouth.singing = True
+        _log("система", "просят спеть" + (f" про {about}" if about else ""))
     if not ok:
         longmem.log("говорилка", who, text)
         if NAME_RE.search(text):                         # говорят о ней, но не ей — обидное запоминает
@@ -2003,7 +2023,7 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
             st["morni_until"] = 0.0
         return
     # задели ли её этой фразой — оценка в фоне, пока пишется ответ (злость не ниже этой оценки)
-    offense = _Offense(text, who) if who != SERVER else None
+    offense = _Offense(text, who) if (who != SERVER and not song) else None
     # кто-то начал говорить, пока мы решали, — не перебиваем: ждём, пока он договорит (до 10 секунд),
     # и заодно, пока опустеет очередь ещё не распознанных кусков его речи
     wait_until = time.time() + 15
@@ -2026,6 +2046,7 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
         if sw.finish():
             yielded = False                             # замолчала по «стоп» — уже записано в журнал
         mouth.stopped.clear()
+        mouth.singing = False
         listener.paused.clear()
     if yielded:
         _log("система", "замолчала — собеседник заговорил, слушаю его")
@@ -2039,7 +2060,7 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
         who = real
     if who != SERVER:
         st["last_who"], st["last_who_at"] = who, time.time()
-    anger = _apply_tone(raw, who, text, anger, offense.get() if offense else 0)
+    anger = _apply_tone(raw, who, text, anger, offense.get() if offense else 0, rated=who != SERVER)
     _take_tags(raw, who)
     answer = _clean(raw)
     longmem.log("говорилка", who, text, answer)
