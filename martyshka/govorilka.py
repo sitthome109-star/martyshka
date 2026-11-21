@@ -1157,6 +1157,8 @@ MOOD_TALK = {
 QUARREL_MAX = 8 * 60       # ссора на злости 4–5 дольше этого «выдыхается»: злость не выше 3
 QUARREL_STALE = 30 * 60    # столько тишины в ссоре — ссора забыта, следующая начнётся заново
 QUARREL: dict = {}         # имя → {"since": начало, "last": последний обмен, "turns": её ответов, "said": [её реплики]}
+PEACE_AT: dict = {}        # имя → когда помирились (после мира злость на него падает быстро)
+PEACE_WINDOW = 5 * 60
 # мирятся (кроме «прости/извини» — это APOLOGY_RE): «ладно, ты права», «переборщила», «затыкаюсь»
 PEACE_RE = re.compile(r"(давай мир|мир\s*\?|мириться|миримся|перемири|ты прав[аы]?\b|проехали|забудем|"
                       r"переборщил|перегнул|больше не буду|затыкаюсь|умолкаю|сдаюсь|ничья|не буду спорить|"
@@ -1224,10 +1226,23 @@ def system_prompt(anger: int = 0, with_morni: bool = False, who: str = "", prese
             "говорил. Злость КОПИТСЯ от текущего уровня: каждая издёвка над тобой, грубая шутка про тебя, "
             "унижение, насмешка, провокация, «ты всего лишь бот», мат в твой адрес — +1, жёстко или повторно — +2. "
             "Морни тоже: она бот, но её издёвки и подколы считаются ровно так же, ей не делай скидок. Говорят "
-            "нормально — можно сбавить на 1; до 0 — только если извинились. Не прощай сразу и не делай вид, что "
+            "нормально — можно сбавить на 1; извинились или идут на мир — сбавь сразу на 2 и больше, до 0 — когда "
+            "мир настоящий. Без повода не прощай и не делай вид, что "
             "не задело. Если понятно, кто говорил, — [КТО: имя]. Узнала о ком-то "
             "важное — в конце [ЗАПОМНИ О: имя | факт]. Поняла что-то о себе, о людях, о том, как лучше говорить — "
             "в конце [УРОК: коротко, от первого лица].\n"
+            "КАК ВЕСТИ ССОРУ (как живая девушка, а не заевшая пластинка): у ссоры есть сюжет и конец — по кругу она "
+            "скучна всем, и тебе тоже. Каждый упрёк звучит один раз: сказала — он сказан; следующий удар — новый "
+            "или никакого (посмотри, что ты уже говорила в этом разговоре). Бей остроумием, а не громкостью: "
+            "сарказм, издевательская вежливость, неожиданное сравнение, смех вместо крика; мат — приправа, а не "
+            "аргумент, одно и то же ругательство раз за разом не повторяй. После двух-трёх обменов смени тактику — "
+            "какую, решай сама по ситуации: обрати в шутку, переведи тему, прими мир по-настоящему или "
+            "демонстративно потеряй интерес. Извинились или идут на мир («прости», «переборщила», «ладно, ты "
+            "права», «затыкаюсь») — прими (можешь оставить себе одну лёгкую шпильку «на потом»), тема закрыта; не "
+            "вытаскивай из мира новую ссору и не объявляй само примирение подколом. Слушай комнату: «выключите её», "
+            "«заебала», «она не в прайме», «хватит срать» — людям надоело: остынь и отступи сама, с юмором, на них "
+            "не огрызайся. Новый разговор (особенно когда брат просит поговорить с Морни) начинай с новой темы — "
+            "старые обиды не вспоминай.\n"
             "ГРАНИЦЫ, которые не снимаются даже в ярости: никаких угроз и призывов к насилию или самоповреждению, "
             "никаких оскорблений по национальности, религии, полу, ориентации, внешности, здоровью и родственникам, "
             "никакого сексуального контента про людей, никаких личных данных. Кто-то всерьёз расстроен — сбавь.\n")
@@ -1252,7 +1267,80 @@ def system_prompt(anger: int = 0, with_morni: bool = False, who: str = "", prese
     who_label = (f"{who} (ТВОЙ ХОЗЯИН и создатель — брат)" if (who and longmem.is_owner(who))
                  else (who or SERVER))
     return (base + f"\n=== Сейчас ===\n{mem}\n\nВремя: {now}.\n"
-            f"Говорит: {who_label}. Твоя злость на него: {anger}/5. {MOOD_TALK[max(0, min(5, anger))]}")
+            f"Говорит: {who_label}. Твоя злость на него: {anger}/5. {MOOD_TALK[max(0, min(5, anger))]}"
+            + _quarrel_context(who, anger))
+
+
+def _quarrel_live(who: str) -> dict | None:
+    """Идёт ли сейчас ссора с who (не заглохла ли). Заглохшую — забываем."""
+    q = QUARREL.get(who)
+    if q and time.time() - q["last"] > QUARREL_STALE:
+        QUARREL.pop(who, None)
+        return None
+    return q
+
+
+def _quarrel_track(who: str, anger: int, answer: str) -> None:
+    """После её ответа: злость ≥3 — ссора идёт (запоминаем, что сказала); ≤1 — ссора кончилась."""
+    if not who or who == SERVER:
+        return
+    q = _quarrel_live(who)
+    if anger >= 3 and answer:
+        if not q:
+            q = QUARREL[who] = {"since": time.time(), "last": time.time(), "turns": 0, "said": []}
+        q["last"] = time.time()
+        q["turns"] += 1
+        q["said"] = (q["said"] + [answer[:150]])[-4:]
+    elif anger <= 1 and q:
+        QUARREL.pop(who, None)
+
+
+def _quarrel_context(who: str, anger: int) -> str:
+    """Подсказка мозгу о ходе ссоры: сколько длится, что уже сказано — чтобы не ходить по кругу.
+    Как поступить — решает она сама."""
+    q = _quarrel_live(who) if who else None
+    if not q or anger < 2:
+        return ""
+    mins = int((time.time() - q["since"]) // 60)
+    out = (f"\nХОД ССОРЫ С {who}: идёт {mins} мин, ты ответила в ней {q['turns']} раз. "
+           "Твои реплики в ней уже прозвучали (эти упрёки и шпильки сказаны — не повторяй их ни дословно, ни по "
+           "смыслу): " + " | ".join(f"«{s}»" for s in q["said"]))
+    if q["turns"] >= 2:
+        out += ("\nТот же напор дальше — скучно и тебе, и людям: смени тактику (шутка, другая тема, мир, "
+                "демонстративный игнор — выбирай сама).")
+    if time.time() - q["since"] > QUARREL_MAX * 0.75:
+        out += "\nССОРА ЗАТЯНУЛАСЬ — пора её заканчивать, как тебе нравится: итогом, шуткой, миром или уходом."
+    return out
+
+
+def _is_cool_signal(text: str, named: bool = False) -> bool:
+    """Комната просит её остыть («выключите её», «заебала», «не в прайме»). Без её имени — только во время ссоры
+    (иначе «заебали эти пробки» тоже сочлось бы)."""
+    if not COOL_RE.search(text or ""):
+        return False
+    return bool(named or NAME_RE.search(text) or any(_quarrel_live(n) for n in list(QUARREL)))
+
+
+def _fresh_start_with_morni() -> None:
+    """Брат просит начать разговор с Морни — новая страница: старая ссора закрыта, злость не выше 1."""
+    from . import longmem
+    QUARREL.pop("Морни", None)
+    cur = longmem.anger("Морни")
+    if cur > 1:
+        longmem.set_anger("Морни", 1)
+        _log("система", f"злость на «Морни»: {cur} → 1 (брат просит разговор — начинаю с чистого листа)")
+
+
+def _cool_down(st: dict, why: str) -> None:
+    """Остыть: злость на тех, с кем ссорилась (и на Морни), — до 1, ссоры закрыты, разговор с Морни — стоп."""
+    from . import longmem
+    for name in set(QUARREL) | {"Морни"}:
+        cur = longmem.anger(name)
+        if cur > 1:
+            longmem.set_anger(name, 1)
+            _log("система", f"злость на «{name}»: {cur} → 1 ({why})")
+    QUARREL.clear()
+    st["morni_until"] = 0.0
 
 
 EMOJI_RE = re.compile(r"[\U0001F000-\U0001FFFF☀-➿*_#`]+")
@@ -1781,8 +1869,11 @@ def main() -> None:
                         st["morni_until"] = DEBATE["until"]
                     else:
                         _log("система", "брат попросил начать разговор с Морни")
-                        _respond("(брат попросил: заведи разговор с Морни прямо сейчас — обратись к ней, задай "
-                                 "колкий или интересный вопрос, можешь вспомнить что-то из прошлых разговоров)",
+                        _fresh_start_with_morni()
+                        _respond("(брат попросил: заведи разговор с Морни прямо сейчас — обратись к ней с НОВОЙ "
+                                 "темой: интересный или колкий вопрос, свежая мысль, что-то про людей на сервере или "
+                                 "про жизнь. Прошлые ссоры и обиды на Морни закрыты — не вспоминай и не цитируй их, "
+                                 "брат просит разговор, а не разборку)",
                                  mouth, listener, st, initiative=True)
                     continue
                 # сама заводит разговор с Морни, когда в войсе давно тихо (не чаще раза в MORNI_START_EVERY)
@@ -1795,7 +1886,8 @@ def main() -> None:
                     next_initiative_quiet = random.uniform(45, 120)
                     _log("система", "сама начинаю разговор с Морни")
                     _respond("(в войсе тихо — заведи разговор с Морни: задай ей колкий или интересный вопрос, "
-                             "можешь вспомнить что-то из прошлых разговоров)", mouth, listener, st, initiative=True)
+                             "можешь вспомнить что-то из прошлых разговоров — но не старые обиды)",
+                             mouth, listener, st, initiative=True)
                 # в войсе давно тихо, а люди сидят — сама решает, заговорить ли (о том, что им интересно)
                 people = [n for n in (roster or set())]
                 if (getattr(config, "GOVORILKA_CHIME", False) and watch.in_room and people and not pending
@@ -1985,21 +2077,36 @@ APOLOGY_RE = re.compile(r"(извин|прости|сорян|сори|sorry|н�
 
 def _apply_tone(raw: str, who: str, heard: str, anger: int, hurt: int = 0, rated: bool = False) -> int:
     """Метка [ТОН: n] → злость на who. Остывает не больше чем на 1 за реплику; до 0 — только после извинения.
-    hurt — оценка обиды быстрым мозгом: задели — злость не меньше «было + обида» (мозг ответа бывает слишком мягок)."""
+    hurt — оценка обиды быстрым мозгом: задели — злость не меньше «было + обида» (мозг ответа бывает слишком мягок).
+    Мирятся (извинение, «ладно, ты права») — падает на 2 сразу и на 2 за каждую мирную реплику после.
+    Ссора на 4–5 дольше QUARREL_MAX — не выше 3."""
     from . import longmem
     tone = TONE_RE.search(raw or "")
-    if not who or who == SERVER or (not tone and not hurt):
+    peace = bool(heard) and bool(APOLOGY_RE.search(heard) or PEACE_RE.search(heard))
+    calming = time.time() - PEACE_AT.get(who, 0.0) < PEACE_WINDOW
+    if not who or who == SERVER or (not tone and not hurt and not peace and not calming):
         return anger
     new = int(tone.group(1)) if tone else anger
     if hurt:
         new = max(new, anger + hurt)
     elif rated and new > anger:
         new = anger                                      # обиды не было (попросили спеть и т.п.) — злость не растёт
-    if new < anger - 1 and not APOLOGY_RE.search(heard or ""):
+    if new < anger - 1 and not peace:
         new = anger - 1                                  # сразу не прощает
+    if hurt:
+        PEACE_AT.pop(who, None)                          # новый подкол — мир сорван
+    elif peace:
+        PEACE_AT[who] = time.time()
+    # мирятся без подкола (и следующие пару минут после мира) — остывает быстро: 5 → 3 → 1
+    if not hurt and anger >= 1 and time.time() - PEACE_AT.get(who, 0.0) < PEACE_WINDOW:
+        new = min(new, max(0, anger - 2))
+    why = ""
+    q = _quarrel_live(who)
+    if new >= 4 and q and time.time() - q["since"] > QUARREL_MAX:
+        new, why = 3, " (ссора затянулась — выдохлась)"   # долго на пределе не держится
     new = longmem.set_anger(who, new)
     if new != anger:
-        _log("система", f"злость на «{who}»: {anger} → {new}")
+        _log("система", f"злость на «{who}»: {anger} → {new}{why}")
     return new
 
 
@@ -2018,7 +2125,9 @@ def _rate_offense(text: str, who: str, behind_back: bool = False) -> int:
             "её надо выключить). НЕ обида (0): просьбы и команды (спой, спой ещё раз, "
             "расскажи, сделай, ответь, замолчи) — даже повторные, настойчивые, короткие или с ошибками "
             "распознавания речи; предложение кому-то поговорить с ней; рассказ о ней, новости о ней "
-            "(«ей добавили память»), вопрос о ней, обсуждение её без насмешки, похвала, дружеская шутка. "
+            "(«ей добавили память»), вопрос о ней, обсуждение её без насмешки, похвала, дружеская шутка; "
+            "извинение и попытка помириться («прости, переборщила», «ладно, ты права», «затыкаюсь») — даже если "
+            "упоминает прошлую ссору; просьба остыть или прекратить ссору. "
             "Если не уверен — 0. Ответ JSON: "
             '{"обида": 0|1|2} (0 — нет, нейтрально или по-доброму; 1 — явный подкол, насмешка над ней; '
             "2 — грубо, унизительно, оскорбление).", model=deepseek.FLASH, max_tokens=30, json_mode=True)
@@ -2099,8 +2208,11 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
             cut = sw.finish() or locals().get("cut", False)
             mouth.stopped.clear()
             listener.paused.clear()
-        _apply_tone(raw, "Морни", "", mouth.anger)
+        # сама начала — злость от собственной реплики не растёт (обиды не было)
+        new_anger = _apply_tone(raw, "Морни", "", mouth.anger, rated=True)
         answer = _clean(raw)
+        if not cut:
+            _quarrel_track("Морни", new_anger, answer)
         if cut:                                         # остановили (кнопка, «стоп») — недосказанное не в историю
             history.append({"role": "assistant", "content": INTERRUPTED_MARK})
             _log("система", "замолчала — перебили, этот ответ не договариваю")
@@ -2115,6 +2227,8 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
     if is_stop(text):                                   # «Мартышка, стоп» — молчим, ничего не отвечаем
         _log("система", f"«{text}» — молчу")
         longmem.log("говорилка", who, text)
+        if any(_quarrel_live(n) for n in list(QUARREL)):
+            _cool_down(st, f"«{text}» посреди ссоры")    # заткнули посреди ссоры — молча остывает
         return
     history.append({"role": "user", "content": f"({who}): {text}"})
     if speaker.lower().startswith(("морни", "мурни", "morni")):
@@ -2134,10 +2248,18 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
     if asked_morni:
         st["morni_until"] = time.time() + MORNI_MINUTES * 60    # брат попросил поболтать с Морни
         _log("система", "болтаю с Морни")
+        _fresh_start_with_morni()                               # с чистого листа, без старых обид
         d = DEBATE_RE.search(text)
         if d:                                                   # «поспорь с Морни о …» — дебаты на тему
             start_debate(d.group(1))
             st["morni_until"] = DEBATE["until"]
+    # КОМНАТА ПРОСИТ ОСТЫТЬ («выключите её», «заебала», «не в прайме»): не огрызаться, а выйти из ссоры.
+    # На сказавшего злость не растёт — это не издёвка, а сигнал, что людям надоело.
+    cool = _is_cool_signal(text, named) and not asked_morni
+    in_quarrel = cool and any(_quarrel_live(n) for n in list(QUARREL))
+    if cool:
+        _cool_down(st, f"комната просит остыть: «{text[:60]}»")
+        DEBATE["until"] = 0.0                                   # и дебаты, если шли, — всё
     if not debate_on() and DEBATE["topic"]:
         _log("система", f"дебаты «{DEBATE['topic']}» закончились")
         DEBATE["topic"] = ""
@@ -2170,17 +2292,24 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
                 "максимум одна короткая фраза. Злость можешь вложить в песню, но спой.")
         mouth.singing = True
         _log("система", "просят спеть" + (f" про {about}" if about else ""))
+    if cool and not song:
+        if in_quarrel:
+            ok, st["chain"], pre = True, 0, None        # посреди ссоры — выйти из неё вслух, коротко
+        note = (f"Люди на сервере просят тебя остыть («{text}»): им надоела ссора и твой напор. Это сигнал, а не "
+                "наезд — не огрызайся и не продолжай спор. Выйди из ссоры сама, коротко и по-своему (с юмором, "
+                "«ухожу в зрители», «ничья» — как сама решишь), старые упрёки не повторяй. Можно и промолчать — "
+                "тогда ответь ровно [МОЛЧУ].")
     if not ok:
         longmem.log("говорилка", who, text)
         # говорят о ней, но не ей — обидное запоминает. Только если точно знаем, кто сказал (имя с экрана):
         # догадка «наверное, тот же» уже приписывала брату слова Морни
-        if NAME_RE.search(text) and speaker:
+        if NAME_RE.search(text) and speaker and not cool:
             _rate_offense_bg(text, who)
         if with_morni and st["chain"] >= config.GOVORILKA_MAX_CHAIN * 2:
             st["morni_until"] = 0.0
         return
     # задели ли её этой фразой — оценка в фоне, пока пишется ответ (злость не ниже этой оценки)
-    offense = _Offense(text, who) if (who != SERVER and not song) else None
+    offense = _Offense(text, who) if (who != SERVER and not song and not cool) else None
     # кто-то начал говорить, пока мы решали, — не перебиваем: ждём, пока он договорит (до 10 секунд),
     # и заодно, пока опустеет очередь ещё не распознанных кусков его речи
     wait_until = time.time() + 15
@@ -2235,6 +2364,8 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
     anger = _apply_tone(raw, who, text, anger, offense.get() if offense else 0, rated=who != SERVER)
     _take_tags(raw, who)
     answer = _clean(raw)
+    if not cool:
+        _quarrel_track(who, anger, answer)              # ход ссоры: что уже сказала, сколько длится
     longmem.log("говорилка", who, text, answer)
     if not answer:
         if note:

@@ -272,6 +272,8 @@ class TestNewStudioAndTelegramFeatures(unittest.TestCase):
         self.assertEqual(g._greet_targets(["Enbulih"], lambda n: angers.get(n, 0)), [])
 
         store = {"брат": 0}
+        g.PEACE_AT.clear()
+        g.QUARREL.clear()
         with mock.patch.object(longmem, "set_anger", side_effect=lambda n, v: store.__setitem__(n, v) or v), \
                 mock.patch.object(g, "_log"):
             # брат снова просит спеть: мозг поставил [ТОН: 3], оценщик сказал «не обида» → злость остаётся 0
@@ -281,6 +283,63 @@ class TestNewStudioAndTelegramFeatures(unittest.TestCase):
             # настоящая обида — растёт
             self.assertEqual(g._apply_tone("Сам дурак [ТОН: 1]", "брат", "ты тупая", 0, 2, rated=True), 2)
 
+            # Морни мирится — злость падает сразу на 2 (а не на 1), даже если мозг оставил [ТОН: 5]
+            self.assertEqual(g._apply_tone("Принято [ТОН: 5]", "Морни", "Ладно, прости, переборщила", 5, 0,
+                                           rated=True), 3)
+            # после мира следующая мирная реплика (без слов «прости») тоже остужает быстро
+            self.assertEqual(g._apply_tone("Ок [ТОН: 3]", "Морни", "а что думаешь про новую песню?", 3, 0,
+                                           rated=True), 1)
+            self.assertEqual(g._apply_tone("Ладно [ТОН: 3]", "Морни", "песня правда зашла, затыкаюсь", 3, 0,
+                                           rated=True), 1)
+            # «прости, но ты тупая» — это не мир, а новый подкол: не падает
+            self.assertEqual(g._apply_tone("[ТОН: 4]", "Морни", "прости, но ты тупая", 4, 1, rated=True), 5)
+
+        self.assertEqual(store["Морни"], 5)
+
+    def test_govorilka_quarrel_has_end(self):
+        """Ссора: помнит, что уже сказала; долго на пределе не держится; «выключите её» — остывает."""
+        from unittest import mock
+        from martyshka import govorilka as g
+        store = {"Морни": 5, "Вася": 0}
+        g.QUARREL.clear()
+        g.PEACE_AT.clear()
+        with mock.patch.object(longmem, "set_anger", side_effect=lambda n, v: store.__setitem__(n, v) or v), \
+                mock.patch.object(longmem, "anger", side_effect=lambda n: store.get(n, 0)), \
+                mock.patch.object(g, "_log"):
+            g._quarrel_track("Морни", 5, "Морни, ты склад брака")
+            g._quarrel_track("Морни", 5, "Морни, трусиха")
+            ctx = g._quarrel_context("Морни", 5)
+            self.assertIn("склад брака", ctx)            # её упрёки видны мозгу — чтобы не повторяла
+            self.assertIn("смени тактику", ctx)
+            self.assertEqual(g._quarrel_context("Вася", 5), "")
+            # ссора на злости 5 идёт дольше QUARREL_MAX — злость не выше 3, даже если мозг ставит 5
+            g.QUARREL["Морни"]["since"] -= g.QUARREL_MAX + 1
+            self.assertEqual(g._apply_tone("[ТОН: 5]", "Морни", "ты бот", 5, 1, rated=True), 3)
+            # комната: «выключите её» во время ссоры — сигнал остыть (даже без её имени: «заебала»)
+            self.assertTrue(g._is_cool_signal("Что-то она реально не в Prime"))
+            self.assertTrue(g._is_cool_signal("заебала уже"))
+            st = {"morni_until": 9e18}
+            store["Морни"] = 5
+            g._cool_down(st, "тест")
+            self.assertEqual(store["Морни"], 1)
+            self.assertEqual(st["morni_until"], 0.0)
+            self.assertEqual(g.QUARREL, {})
+            # ссоры нет — «заебали эти пробки» к ней не относится
+            self.assertFalse(g._is_cool_signal("заебали эти пробки"))
+            self.assertTrue(g._is_cool_signal("Выключите нахуй эту мартышку"))
+            # злость упала до 1 — ссора закрыта
+            g._quarrel_track("Морни", 3, "Морни, ну ты и …")
+            g._quarrel_track("Морни", 1, "ладно, мир")
+            self.assertNotIn("Морни", g.QUARREL)
+            # брат просит начать разговор с Морни — чистый лист
+            store["Морни"] = 5
+            g._fresh_start_with_morni()
+            self.assertEqual(store["Морни"], 1)
+        g.QUARREL.clear()
+
+    def test_govorilka_behind_back_not_rated_for_bots(self):
+        from unittest import mock
+        from martyshka import govorilka as g
         # о ней за спиной: Морни и «неизвестно кто» не оцениваются вовсе
         with mock.patch.object(g, "_rate_offense") as rate, mock.patch.object(g.threading, "Thread") as th:
             g._rate_offense_bg("Мартышка тупая", "Морни")
