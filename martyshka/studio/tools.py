@@ -188,6 +188,10 @@ TOOLS = [
      "description": "Поиск в долгой памяти: что было в какой-то день (вчера, 2026-11-19), что говорил человек "
                     "(в Говорилке, голосом, в чате), о чём договаривались.",
      "input_schema": _schema({"query": S}, ["query"])},
+    {"name": "learn", "group": "memory",
+     "description": "Записать в свой опыт урок на будущее: как лучше сделать такое дело, что сработало/не "
+                    "сработало, что брат любит, как устроены его программы. Коротко, от первого лица.",
+     "input_schema": _schema({"lesson": S}, ["lesson"])},
     {"name": "remember", "group": "memory",
      "description": "Запомнить надолго полезный факт: где лежит проект, как брат любит, какие программы у него "
                     "есть. Коротко, одной фразой.",
@@ -195,7 +199,7 @@ TOOLS = [
 ]
 TOOL_GROUP = {t["name"]: t["group"] for t in TOOLS}
 CHAT_TOOL_NAMES = ("web_search", "web_fetch", "open_app", "open_settings", "open_path", "screen_look",
-                   "martyshka_action", "remember", "memory_search", "windows", "govorilka", "run_python")
+                   "martyshka_action", "remember", "learn", "memory_search", "windows", "govorilka", "run_python")
 
 
 def active_tools(names: tuple[str, ...] | None = None) -> list[dict]:
@@ -221,7 +225,7 @@ ACTIVITY = {
     "open_settings": ("exec", "Открываю настройки"), "windows": ("look", "Смотрю окна"),
     "screen_look": ("look", "Смотрю на экран"), "click": ("exec", "Кликаю"), "press_keys": ("exec", "Нажимаю"),
     "type_text": ("write", "Печатаю"), "open_path": ("exec", "Открываю"),
-    "martyshka_action": ("exec", "Делаю"), "remember": ("memory", "Запоминаю"), "memory_search": ("memory", "Вспоминаю"),
+    "martyshka_action": ("exec", "Делаю"), "remember": ("memory", "Запоминаю"), "memory_search": ("memory", "Вспоминаю"), "learn": ("memory", "Учусь"),
     "make_icon": ("draw", "Делаю иконку"), "update_app": ("exec", "Обновляю Студию"),
     "govorilka": ("exec", "Говорилка"), "grep_code": ("search", "Ищу в коде"), "glob_files": ("search", "Ищу файлы"),
     "run_python": ("exec", "Запускаю Python"), "git_command": ("exec", "Git"), "http_request": ("exec", "Запрос"),
@@ -561,6 +565,11 @@ def _run(name: str, args: dict, ctx: dict) -> dict:
 
     if name == "remember":
         return {"text": _remember(args["fact"]), "ok": True}
+
+    if name == "learn":
+        from .. import growth
+        new = growth.add(args["lesson"], "чат", "сама")
+        return {"text": "Записала в опыт." if new else "Такой урок уже есть — подтвердила его.", "ok": True}
 
     if name == "govorilka":
         from .. import govorilka

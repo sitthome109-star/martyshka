@@ -215,6 +215,11 @@ def summarize_pending() -> None:
             done[d] = text
             _save(DAYS, done)
             _learn_people(recs)
+            try:                                   # саморазвитие: чему научилась за день
+                from . import growth
+                growth.reflect_day(d, _feed_text(recs))
+            except Exception:
+                pass
 
 
 def _learn_people(recs: list[dict]) -> None:

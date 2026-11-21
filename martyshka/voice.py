@@ -22,12 +22,15 @@ from . import config, fish
 SAMPLE_RATE = fish.SAMPLE_RATE
 MIN_CHUNK = 40  # короткие предложения склеиваем со следующими — интонация живее и запросов меньше
 
-CUE_RE = re.compile(r"\{\s*([a-zA-Zа-яА-ЯёЁ][^{}]{0,40}?)\s*\}")
+CUE_RE = re.compile(r"\{\s*([a-zA-Zа-яА-ЯёЁ][^{}]{0,90}?)\s*\}")
+# парные метки Drama 3 / S2: меняют подачу только обёрнутых слов (Fish понимает и в бесплатной модели)
+PAIR_TAGS = ("whisper", "emphasis", "soft", "fast", "slow", "stress", "forceful")
+PAIR_RE = re.compile(r"</?\s*(?:" + "|".join(PAIR_TAGS) + r")\s*>", re.I)
 
 
 def strip_cues(text: str) -> str:
-    """Убрать метки эмоций из текста для экрана/журнала."""
-    return re.sub(r"\s{2,}", " ", CUE_RE.sub("", text))
+    """Убрать метки эмоций и подачи из текста для экрана/журнала."""
+    return re.sub(r"\s{2,}", " ", PAIR_RE.sub("", CUE_RE.sub("", text)))
 
 
 class CueFilter:
@@ -38,21 +41,29 @@ class CueFilter:
     def feed(self, piece: str) -> str:
         s = self.hold + piece
         self.hold = ""
-        cut = s.rfind("{")
-        if cut != -1 and "}" not in s[cut:] and len(s) - cut < 45:
-            s, self.hold = s[:cut], s[cut:]
-        return CUE_RE.sub("", s)
+        for o, c, lim in (("{", "}", 95), ("<", ">", 14)):     # недописанная метка — придержать
+            cut = s.rfind(o)
+            if cut != -1 and c not in s[cut:] and len(s) - cut < lim:
+                s, self.hold = s[:cut], s[cut:] + self.hold
+        return strip_cues(s)
 
     def flush(self) -> str:
-        s, self.hold = CUE_RE.sub("", self.hold), ""
+        s, self.hold = strip_cues(self.hold), ""
         return s
 
 
 def prepare_text(text: str, lang: str = "ru") -> str:
     """Готовим текст для Fish: метки эмоций {x} → [x], разметку и эмодзи убираем. Числа Fish читает сам."""
     text = re.sub(r"\[[^\]]*\]", " ", text)                         # служебные метки дел — не читаем
-    text = CUE_RE.sub(lambda m: f"[{m.group(1).strip()}]", text)   # эмоции — Fish понимает [laughing]
-    text = re.sub(r"[*_#`~>|{}+]", " ", text)
+    text = CUE_RE.sub(lambda m: f"[{m.group(1).strip()}]", text)   # эмоции и подача — Fish понимает [вздох]
+    pairs = {}
+    def keep(m):                                                    # парные метки сохраняем как есть
+        pairs[f"\x00{len(pairs)}\x00"] = m.group(0).lower().replace(" ", "")
+        return f" \x00{len(pairs) - 1}\x00 "
+    text = PAIR_RE.sub(keep, text)
+    text = re.sub(r"[*_#`~<>|{}+]", " ", text)
+    for k, v in pairs.items():
+        text = text.replace(k, v)
     text = re.sub(r"[\U0001F000-\U0001FFFF☀-➿]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 

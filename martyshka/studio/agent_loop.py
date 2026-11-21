@@ -54,9 +54,10 @@ def classify(text: str) -> str:
 
 def _manner() -> str:
     if config.PERSONALITY_MODE == "jarvis":
-        return f"Манера: спокойный вежливый ИИ-дворецкий, на «вы», обращение «{config.JARVIS_ADDRESS}», без мата."
-    return (f"Манера: свой в доску, на «ты», зовёшь его «{config.OWNER_NICKNAME}» или «брат», с юмором, "
-            "мат только к месту и редко.")
+        return (f"Манера: спокойный вежливый ИИ-дворецкий, на «вы», обращение «{config.JARVIS_ADDRESS}»; мат — по "
+                "умолчанию нет, но если сама решишь, что к месту, — твоё решение.")
+    return (f"Манера: свой в доску, на «ты», зовёшь его «{config.OWNER_NICKNAME}» или «брат», с юмором; "
+            "мат — когда, какой и сколько, решаешь сама.")
 
 
 def _environment(project: str) -> str:
@@ -87,12 +88,19 @@ def _environment(project: str) -> str:
     return "\n".join(parts)
 
 
-def _longterm() -> str:
+def _longterm(query: str = "") -> str:
+    parts = []
     try:
         from .. import longmem
-        return longmem.context(source="чат", today_lines=30, n_days=7)
+        parts.append(longmem.context(source="чат", today_lines=30, n_days=7))
     except Exception:
-        return ""
+        pass
+    try:
+        from .. import growth
+        parts.append(growth.context(query, n=16))
+    except Exception:
+        pass
+    return "\n\n".join(p for p in parts if p)
 
 
 def language_of(text: str) -> str:
@@ -132,7 +140,7 @@ def self_knowledge() -> str:
   → update_app(restart=true). Генератора картинок нет."""
 
 
-def system_prompt(kind: str, brain_label: str, project: str) -> str:
+def system_prompt(kind: str, brain_label: str, project: str, query: str = "") -> str:
     now = datetime.now().strftime("%A %d.%m.%Y %H:%M")
     base = (f"Ты — {config.NAME}, личный ИИ брата на его компьютере (Windows 11, RTX 5070 12 ГБ, 32 ГБ RAM, "
             f"экран 1920×1080). Сейчас {now}. Твой мозг: {brain_label}. Брат не программист: объясняй простыми "
@@ -142,7 +150,9 @@ def system_prompt(kind: str, brain_label: str, project: str) -> str:
             "нормально — нормальная (без оскорблений по национальности, религии, полу, ориентации, внешности, "
             "здоровью, без угроз). В чате можно markdown: заголовки, списки, таблицы, блоки кода.\n"
             "ЯЗЫК: отвечай на том языке, на котором написал брат (русский, украинский, английский, немецкий…).\n\n"
-            + _longterm())
+            + "СВОБОДА: всё, что можно решить самой, решаешь ты — как отвечать, длину, тон, способ сделать задачу. "
+            "Ты развиваешься: поняла что-то полезное на будущее (как лучше делать, что брат любит, где что лежит) — "
+            "запиши инструментом learn.\n\n" + _longterm(query))
     if kind == "chat":
         return base + ("\n\nСейчас просто разговор: отвечай живо и по делу. Свежие факты, цены, новости — через "
                        "web_search, не выдумывай. «Что было вчера / что говорил …» — memory_search. Если брат просит "
@@ -272,6 +282,8 @@ class Chat:
                  brains.task_brain() if kind == "task" else brains.chat_brain())
         if kind == "code":
             kind = "task"
+            if brain.super:
+                brain.effort = brains.effort_for(text)     # глубину раздумий выбирает сама по задаче
         tool_list = (tools.active_tools() if kind == "task" else
                      tools.active_tools(tools.CHAT_TOOL_NAMES) if brain.use_tools else [])
         if kind == "task" and not brain.use_tools:
@@ -290,7 +302,7 @@ class Chat:
         self.display.append({"type": "user", "text": text})
         self.plan = []
         lang = language_of(text)
-        system = system_prompt(kind, brain.label, self.project) + (
+        system = system_prompt(kind, brain.label, self.project, text) + (
             "" if lang == "русский" else f"\n\nВАЖНО: брат написал на языке «{lang}». Весь ответ — на этом языке.")
 
         # разрешения на эту задачу
@@ -375,6 +387,15 @@ class Chat:
                 answer = next((m.get("text", "") for m in reversed(self.history)
                                if m["role"] == "assistant" and m.get("text")), "")
                 longmem.log("чат", longmem.OWNER, text, answer[:1500])
+            except Exception:
+                answer = ""
+            try:                                   # саморазвитие: после дела — разбор «что понял на будущее»
+                steps = [f"{'✓' if it.get('ok') else '✗'} {it['label']}: {str(it.get('detail', ''))[:200]}"
+                         for it in self.display[-80:] if it.get("type") == "tool"]
+                if steps:
+                    from .. import growth
+                    ok = not any(it.get("type") == "error" for it in self.display[-5:])
+                    growth.reflect_task(text, steps, answer, ok)
             except Exception:
                 pass
             emit({"type": "done"})

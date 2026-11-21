@@ -132,8 +132,15 @@ def task_brain() -> DeepSeekBrain:
 def code_brain() -> DeepSeekBrain:
     if mode() in ("flash", deepseek.FLASH):
         return DeepSeekBrain(deepseek.FLASH, think=True, effort="high", role="агент")
-    return DeepSeekBrain(deepseek.PRO, think=True, effort=getattr(config, "THINK_EFFORT", "high") or "high",
-                         role="агент")
+    return DeepSeekBrain(deepseek.PRO, think=True, effort="high", role="агент")
+
+
+def effort_for(text: str) -> str:
+    """Насколько глубоко думать — решает сама по задаче: большое и сложное — максимально."""
+    import re
+    big = len(text) > 500 or re.search(r"(с нуля|целиком|полностью|архитектур|сложн|большо|приложени|игр[ауы]|"
+                                       r"оптимизир|переделай|рефактор|найди ошибк|почему не работает)", text, re.I)
+    return "max" if big else "high"
 
 
 # ---------- совместимость (раньше были модели на ПК) ----------

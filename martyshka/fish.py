@@ -99,10 +99,10 @@ def speak(text: str, voice_id: str | None = None, speed: float | None = None, te
     global _free_failed
     body = {"text": text, "reference_id": voice_id or getattr(config, "VOICE_ID", "") or DEFAULT_VOICE,
             "format": "pcm", "sample_rate": sample_rate, "latency": latency, "normalize": True,
-            "temperature": float(temperature if temperature is not None else getattr(config, "VOICE_TEMPERATURE", 0.7)),
-            "top_p": 0.7, "chunk_length": 200,
-            "prosody": {"speed": float(speed if speed is not None else getattr(config, "VOICE_SPEED", 1.0)),
-                        "volume": 0, "normalize_loudness": True}}
+            # выразительность и темп настроек больше не имеют — подачу Мартышка задаёт сама метками в тексте
+            "temperature": float(temperature if temperature is not None else 0.8),
+            "top_p": 0.8, "chunk_length": 200,
+            "prosody": {"speed": float(speed if speed is not None else 1.0), "volume": 0, "normalize_loudness": True}}
     for attempt in range(3):
         model = tts_model()
         try:

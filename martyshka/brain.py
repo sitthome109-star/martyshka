@@ -250,11 +250,12 @@ class Brain:
         return {"think": False}
 
     def _options(self, **extra) -> dict:
-        return {"temperature": config.TEMPERATURE, "num_predict": 1500, **extra}
+        return {"temperature": 0.95, "num_predict": 6000, **extra}       # длину и живость решает сама
 
     def _messages(self, user_text: str | None = None, extra_system: str | None = None,
                   history_n: int | None = None) -> list[dict]:
-        msgs = [{"role": "system", "content": build_system_prompt(self.memory.fact_texts(), source=self.source)}]
+        msgs = [{"role": "system", "content": build_system_prompt(self.memory.fact_texts(), source=self.source,
+                                                                  query=user_text or "")}]
         hist = []
         for m in self.memory.recent_history():
             # Метки дел из прошлых ответов модели НЕ показываем — иначе она повторяет старые дела
@@ -450,6 +451,11 @@ class Brain:
         tone = TONE_RE.search(full)
         if tone:
             longmem.set_anger(longmem.OWNER, int(tone.group(1)))
+        try:
+            from . import growth
+            growth.take_tags(full, self.source)        # [УРОК: …] — её собственный опыт
+        except Exception:
+            pass
         for who, fact in ABOUT_RE.findall(full):
             if longmem.remember_about(who, fact):
                 self.last_changes.remembered.append(f"{who}: {fact}")
