@@ -54,6 +54,27 @@ systemctl restart martyshka.service
 echo ""
 echo "Готово! Статус сервиса:"
 systemctl status martyshka.service --no-pager -l || true
-echo ""
-echo "Для пульта управления с ПК добавь в Caddy:"
-echo "  handle_path /martyshka-api/* { reverse_proxy 127.0.0.1:8787 }"
+
+# Безопасное автодобавление /martyshka-api/* в Caddyfile (с бэкапом и проверкой caddy validate)
+CADDYFILE="/etc/caddy/Caddyfile"
+if [ -f "$CADDYFILE" ] && ! grep -q "/martyshka-api/" "$CADDYFILE" && grep -q "/bot-ws" "$CADDYFILE"; then
+  echo "==> Добавляю /martyshka-api/* в $CADDYFILE..."
+  cp -f "$CADDYFILE" "${CADDYFILE}.bak.martyshka"
+  awk '
+    !done && /\/bot-ws/ {
+      print "    handle_path /martyshka-api/* {"
+      print "        reverse_proxy 127.0.0.1:8787"
+      print "    }"
+      done=1
+    }
+    { print }
+  ' "${CADDYFILE}.bak.martyshka" > "$CADDYFILE"
+  if command -v caddy >/dev/null 2>&1 && caddy validate --config "$CADDYFILE" >/dev/null 2>&1; then
+    systemctl reload caddy && echo "==> Caddy обновлён! Пульт доступен на /martyshka-api/"
+  else
+    echo "ВНИМАНИЕ: автопатч Caddy не прошёл проверку — восстанавливаю исходный Caddyfile."
+    mv -f "${CADDYFILE}.bak.martyshka" "$CADDYFILE"
+    echo "Добавь вручную в Caddyfile:"
+    echo "  handle_path /martyshka-api/* { reverse_proxy 127.0.0.1:8787 }"
+  fi
+fi
