@@ -1115,8 +1115,11 @@ def system_prompt(anger: int = 0, with_morni: bool = False, who: str = "", prese
             "спрашивай об этом, шути на эту тему, сама заводи разговор. Поняла, чем человек увлекается, — в конце "
             "[ИНТЕРЕС: имя | тема коротко].\n"
             "СЛУЖЕБНЫЕ МЕТКИ (их не слышат): в САМОМ начале ответа [ТОН: 0..5] — твоя злость на того, кто сейчас "
-            "говорил. Как с тобой — так и ты: оскорбили — выше; говорят нормально — ниже; извинились — 0. "
-            "Дружеские подколки от оскорблений отличай. Если понятно, кто говорил, — [КТО: имя]. Узнала о ком-то "
+            "говорил. Злость КОПИТСЯ от текущего уровня: каждая издёвка над тобой, грубая шутка про тебя, "
+            "унижение, насмешка, провокация, «ты всего лишь бот», мат в твой адрес — +1, жёстко или повторно — +2. "
+            "Морни тоже: она бот, но её издёвки и подколы считаются ровно так же, ей не делай скидок. Говорят "
+            "нормально — можно сбавить на 1; до 0 — только если извинились. Не прощай сразу и не делай вид, что "
+            "не задело. Если понятно, кто говорил, — [КТО: имя]. Узнала о ком-то "
             "важное — в конце [ЗАПОМНИ О: имя | факт]. Поняла что-то о себе, о людях, о том, как лучше говорить — "
             "в конце [УРОК: коротко, от первого лица].\n"
             "ГРАНИЦЫ, которые не снимаются даже в ярости: никаких угроз и призывов к насилию или самоповреждению, "
@@ -1211,7 +1214,13 @@ def is_stop(text: str) -> bool:
     t = (text or "").strip()
     if not STOP_WORDS_RE.search(t):
         return False
-    return bool(NAME_RE.search(t)) or len(re.findall(r"\w+", t)) <= 3
+    words = re.findall(r"\w+", t.lower())
+    if len(words) <= 4:
+        return True
+    # длинная фраза («Мартышка, сиди тихо, взрослые разговаривают…») — это не команда, а реплика
+    names = [i for i, w in enumerate(words) if NAME_RE.search(w)]
+    stops = [i for i, w in enumerate(words) if STOP_WORDS_RE.fullmatch(w)]
+    return any(abs(a - b) <= 2 for a in names for b in stops) and len(words) <= 7
 
 
 class StopWatcher:
@@ -1401,7 +1410,7 @@ def addressed_to_other(text: str) -> str:
 
 
 def should_answer(text: str, last_reply_at: float, chain: int, with_morni: bool = False,
-                  same_speaker: bool = False) -> tuple[bool, int]:
+                  same_speaker: bool = False, from_morni: bool = True) -> tuple[bool, int]:
     """Ответить ли на услышанное. Возвращает (ответить, новая длина цепочки ответов без имени).
 
     Главное правило (просьба брата): Мартышка откликается ТОЛЬКО когда её позвали по имени.
@@ -1414,7 +1423,7 @@ def should_answer(text: str, last_reply_at: float, chain: int, with_morni: bool 
     # с Морни разговор может быть длиннее, а дебаты — ещё длиннее
     limit = config.GOVORILKA_MAX_CHAIN * (5 if (with_morni and debate_on()) else 2 if with_morni else 1)
     # разговор с Морни (брат сам попросил) — её реплики принимаем без имени
-    if with_morni and time.time() - last_reply_at < config.GOVORILKA_FOLLOWUP and chain < limit:
+    if with_morni and from_morni and time.time() - last_reply_at < config.GOVORILKA_FOLLOWUP and chain < limit:
         return True, chain + 1
     # режим диалога: продолжаем беседу с тем, кто только что обратился по имени
     if STICKY_DIALOG and same_speaker and time.time() - last_reply_at < config.GOVORILKA_FOLLOWUP and chain < limit:
@@ -1785,7 +1794,8 @@ def _predict(text: str, speaker: str, st: dict) -> list[dict] | None:
     if speaker.lower().startswith(("морни", "мурни", "morni")):
         morni_until = max(morni_until, now + MORNI_MINUTES * 60)
     with_morni = now < morni_until
-    ok, _ = should_answer(text, st["last_reply_at"], st["chain"], with_morni, same)
+    ok, _ = should_answer(text, st["last_reply_at"], st["chain"], with_morni, same,
+                          from_morni=who == SERVER or who.lower().startswith(MORNI_NAMES))
     if not (ok or asked):
         return None
     hist = st["history"] + [{"role": "user", "content": f"({who}): {text}"}]
@@ -1811,6 +1821,7 @@ def _speak_own(instruction: str, mouth, listener, st, who: str = "", tag: str = 
         sw.finish()
         mouth.stopped.clear()
         listener.paused.clear()
+    _apply_tone(raw, who, "", mouth.anger)
     _take_tags(raw, who)
     answer = _clean(raw)
     if answer:
@@ -1822,6 +1833,71 @@ def _speak_own(instruction: str, mouth, listener, st, who: str = "", tag: str = 
         history.pop()                                   # промолчала — подсказку из истории убираем
         _log("система", f"{tag or 'сама'}: решила промолчать")
     return answer
+
+
+APOLOGY_RE = re.compile(r"(извин|прости|сорян|сори|sorry|не обижайся|был[аи]? неправ|погорячил)", re.I)
+
+
+def _apply_tone(raw: str, who: str, heard: str, anger: int, hurt: int = 0) -> int:
+    """Метка [ТОН: n] → злость на who. Остывает не больше чем на 1 за реплику; до 0 — только после извинения.
+    hurt — оценка обиды быстрым мозгом: задели — злость не меньше «было + обида» (мозг ответа бывает слишком мягок)."""
+    from . import longmem
+    tone = TONE_RE.search(raw or "")
+    if not who or who == SERVER or (not tone and not hurt):
+        return anger
+    new = int(tone.group(1)) if tone else anger
+    if hurt:
+        new = max(new, anger + hurt)
+    if new < anger - 1 and not APOLOGY_RE.search(heard or ""):
+        new = anger - 1                                  # сразу не прощает
+    new = longmem.set_anger(who, new)
+    if new != anger:
+        _log("система", f"злость на «{who}»: {anger} → {new}")
+    return new
+
+
+def _rate_offense(text: str, who: str) -> int:
+    """Насколько фраза задевает Мартышку: 0 — нет, 1 — подкол/насмешка, 2 — грубо/унизительно."""
+    from . import deepseek
+    try:
+        raw = deepseek.ask(
+            f"Фраза на голосовом сервере (сказал {who}): «{text}»\nМартышка — ИИ-девушка на этом сервере. "
+            "Это издёвка, унижение, грубая шутка, оскорбление или провокация в адрес Мартышки? Ответ JSON: "
+            '{"обида": 0|1|2} (0 — нет, нейтрально или по-доброму; 1 — подкол, насмешка; 2 — грубо, унизительно, '
+            "оскорбление).", model=deepseek.FLASH, max_tokens=30, json_mode=True)
+        return max(0, min(2, int(json.loads(raw).get("обида") or 0)))
+    except Exception:
+        return 0
+
+
+class _Offense:
+    """Оценка обиды в фоне, пока мозг пишет ответ (без лишней задержки)."""
+
+    def __init__(self, text: str, who: str):
+        self.value = 0
+        self._t = threading.Thread(target=lambda: setattr(self, "value", _rate_offense(text, who)), daemon=True)
+        self._t.start()
+
+    def get(self, wait: float = 4.0) -> int:
+        self._t.join(timeout=wait)
+        return self.value
+
+
+def _rate_offense_bg(text: str, who: str) -> None:
+    """Над Мартышкой смеются за спиной («Мартышка просто завидует…») — она не отвечает, но запоминает обиду:
+    быстрый мозг оценивает, задевает ли это её, и злость на сказавшего растёт."""
+    if not who or who == SERVER:
+        return
+
+    def run():
+        from . import longmem
+        hurt = _rate_offense(text, who)
+        if hurt > 0:
+            cur = longmem.anger(who)
+            new = longmem.set_anger(who, cur + hurt)
+            if new != cur:
+                _log("система", f"злость на «{who}»: {cur} → {new} (смеялся(-ась) над ней за спиной)")
+    threading.Thread(target=run, daemon=True).start()
 
 
 def _take_tags(raw: str, who: str) -> None:
@@ -1862,6 +1938,7 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
             sw.finish()
             mouth.stopped.clear()
             listener.paused.clear()
+        _apply_tone(raw, "Морни", "", mouth.anger)
         answer = _clean(raw)
         if answer:
             history.append({"role": "assistant", "content": answer})
@@ -1901,7 +1978,8 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
         _log("система", f"дебаты «{DEBATE['topic']}» закончились")
         DEBATE["topic"] = ""
     with_morni = time.time() < st["morni_until"]
-    ok, st["chain"] = should_answer(text, st["last_reply_at"], st["chain"], with_morni, same_speaker)
+    ok, st["chain"] = should_answer(text, st["last_reply_at"], st["chain"], with_morni, same_speaker,
+                                    from_morni=who == SERVER or who.lower().startswith(MORNI_NAMES))
     if asked_morni:
         ok, st["chain"] = True, 0
     anger = longmem.anger(who)
@@ -1919,9 +1997,13 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
                     "тема, которую человек любит. Коротко, по-живому. Если нечего — ответь ровно [МОЛЧУ].")
     if not ok:
         longmem.log("говорилка", who, text)
+        if NAME_RE.search(text):                         # говорят о ней, но не ей — обидное запоминает
+            _rate_offense_bg(text, who)
         if with_morni and st["chain"] >= config.GOVORILKA_MAX_CHAIN * 2:
             st["morni_until"] = 0.0
         return
+    # задели ли её этой фразой — оценка в фоне, пока пишется ответ (злость не ниже этой оценки)
+    offense = _Offense(text, who) if who != SERVER else None
     # кто-то начал говорить, пока мы решали, — не перебиваем: ждём, пока он договорит (до 10 секунд),
     # и заодно, пока опустеет очередь ещё не распознанных кусков его речи
     wait_until = time.time() + 15
@@ -1957,12 +2039,7 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
         who = real
     if who != SERVER:
         st["last_who"], st["last_who_at"] = who, time.time()
-    tone = TONE_RE.search(raw)
-    if tone:
-        new_anger = longmem.set_anger(who, int(tone.group(1)))
-        if new_anger != anger:
-            _log("система", f"злость на «{who}»: {anger} → {new_anger}")
-        anger = new_anger
+    anger = _apply_tone(raw, who, text, anger, offense.get() if offense else 0)
     _take_tags(raw, who)
     answer = _clean(raw)
     longmem.log("говорилка", who, text, answer)
