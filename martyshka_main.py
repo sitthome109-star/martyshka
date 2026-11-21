@@ -196,6 +196,9 @@ def main() -> None:
     media.set_hooks(gpu_before=None, gpu_after=None, llm=brain.complete)
     from martyshka import games      # игры: код пишет сильный мозг DeepSeek
     games.set_llm(brain.complete_raw)
+    # ---------- Telegram (работает и без голоса, когда открыт чат) ----------
+    from martyshka import telegram_service
+    telegram_service.start(log=status, brain=brain, transcriber=transcriber)
 
     def speak(pieces, lang: str = "ru") -> str:
         """Озвучить ответ мозга и напечатать его. Возвращает сказанный текст."""
@@ -256,102 +259,6 @@ def main() -> None:
     dictation = {"on": False, "last": 0.0}
     turn_log = errlog.Turn()             # дневник ошибок: прошлый ход — чтобы при жалобе записать, что было не так
 
-    # ---------- Telegram (писать с телефона) ----------
-    tg = None
-    if config.TELEGRAM_TOKEN.strip():
-        try:
-            from martyshka.telegram_bot import TelegramBot
-            tg = TelegramBot(ears.events, log=status)
-            if not tg.start():
-                tg = None
-        except Exception as e:
-            status(f"   (Telegram не запустился: {e})")
-            tg = None
-
-    def handle_telegram(msg: dict) -> None:
-        """Сообщение с телефона: то же, что голосом, только ответ — текстом в Telegram."""
-        text = msg.get("text", "")
-        if msg.get("voice"):
-            data = tg.download_voice(msg["voice"])
-            try:
-                import io
-                import numpy as np
-                import soundfile as sf
-                from scipy.signal import resample_poly
-                a, sr = sf.read(io.BytesIO(data), dtype="float32")
-                if a.ndim > 1:
-                    a = a.mean(1)
-                g = np.gcd(16000, sr)
-                text = transcriber.transcribe(resample_poly(a, 16000 // g, sr // g).astype(np.float32))
-            except Exception:
-                text = ""
-            if not text:
-                tg.send("Не разобрал голосовое — напиши текстом.")
-                return
-            tg.send(f"🎙 Услышал: {text}")
-        text = strip_wake_word(text) or text      # «Мартышка, …» — имя не нужно
-        print(f"{CYAN}📱 Ты (Telegram):{RESET} {text}")
-        turn_log.complaint(text, "telegram")
-        lines = []
-        if game["on"]:
-            if GAME_OFF_RE.search(text):
-                exit_game()
-                tg.send(style.phrase("game_off"))
-            else:
-                tg.send(style.phrase("tg_game"))
-            return
-        tg.typing()
-        own = commands.match(text)
-        if own:
-            _s, _n, lines = hands.execute_all(commands.actions_for(own, brain.actions_only), tg.confirm)
-            for line in lines:
-                print(f"{YELLOW}  {line}{RESET}")
-            tg.send(own.get("say", "").strip() or "Сделано.")
-            return
-        lang = reply_language(text)
-        brain.source = "telegram"
-        try:
-            answer = "".join(brain.reply(text, lang)).strip()
-        finally:
-            brain.source = "голос"
-        if not brain.last_actions and config.WEB_ENABLED and DONT_KNOW_RE.search(answer):
-            brain.last_actions = [("узнать", [text])]
-            answer = ""
-        if answer:
-            tg.send(answer)
-        if brain.last_actions:
-            tg.typing()
-            hands.set_progress(tg.send)
-            summary, need_report, lines = run_actions(brain, hands, brain.last_actions, tg.confirm, text)
-            hands.set_progress(status)
-            hands.to_read.clear()           # «прочитать вслух» с телефона не нужно
-            for line in lines:
-                print(f"{YELLOW}  {line}{RESET}")
-            if any(a[0] in ("фото", "видео", "нарисуй") for a in brain.last_actions):   # результат — на телефон
-                from martyshka import media
-                f = media.last_file
-                if f and f.exists() and time.time() - f.stat().st_mtime < 600:
-                    if f.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp") and f.stat().st_size < 9_000_000:
-                        tg.send_photo(f)
-                    else:
-                        tg.send_document(f)
-            if any(a[0] in ("документ", "таблица", "игра", "доработать игру", "exe") for a in brain.last_actions):   # готовый файл — на телефон
-                files = sorted((Path.home() / "Documents").glob("*.*"), key=lambda p: p.stat().st_mtime)
-                newest = hands.last_document or (files[-1] if files else None)
-                if newest and newest.exists() and time.time() - newest.stat().st_mtime < 600:
-                    tg.send_document(newest)
-            if any(a[0] == "скриншот" for a in brain.last_actions):   # скриншот — сразу на телефон
-                shots = sorted((Path.home() / "Pictures" / "Скриншоты Мартышки").glob("*.png"),
-                               key=lambda p: p.stat().st_mtime)
-                if shots:
-                    tg.send_photo(shots[-1])
-            if need_report:
-                tg.send("".join(brain.report(summary)).strip())
-            elif brain.pending_say:
-                tg.send("".join(brain.say_text(brain.pending_say)))
-        turn_log.done(text, brain.last_actions, lines, answer, None, "telegram")
-        print(f"{GREEN}{config.NAME} → Telegram{RESET}")
-
     # ---------- режим игр ----------
     game = {"on": False}
 
@@ -405,14 +312,6 @@ def main() -> None:
     while True:
         kind, data = ears.events.get()
 
-        if kind == "telegram":
-            if tg is not None:
-                try:
-                    handle_telegram(data)
-                except Exception as e:
-                    status(f"   (Telegram: ошибка {e})")
-                    tg.send(f"Что-то сломалось: {e}")
-            continue
         if kind == "game_toggle":
             exit_game() if game["on"] else enter_game()
             continue

@@ -434,6 +434,23 @@ def main() -> None:
             pass
     import webview
     setup_helpers()
+
+    def _telegram_log(text: str) -> None:
+        try:
+            with open(config.DATA_DIR / "журнал.txt", "a", encoding="utf-8") as f:
+                f.write(time.strftime("%d.%m %H:%M:%S ") + str(text) + "\n")
+        except Exception:
+            pass
+
+    # Telegram-бот работает, даже когда голос выключен: бота держит тот, кто запустился первым
+    # (голосовая Мартышка или это окно чата). Здесь — фоновый запуск с собственным мозгом.
+    try:
+        from .. import telegram_service
+        threading.Thread(target=telegram_service.start, kwargs={"log": _telegram_log}, daemon=True,
+                         name="telegram-studio").start()
+    except Exception:
+        pass
+
     try:                                       # своя иконка на панели задач, а не значок Python
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Martyshka.Studio")
     except Exception:
