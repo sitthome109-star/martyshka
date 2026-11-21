@@ -60,7 +60,7 @@ pub fn mood_pick(text: &str, voice_id: &str, model: &str, anger: i32) -> (String
     (clean, vid, mdl)
 }
 
-pub async fn speak_pcm(text: &str, voice_id: Option<&str>, model: Option<&str>, anger: i32) -> Result<Vec<f32>> {
+pub async fn speak_pcm_bytes(text: &str, voice_id: Option<&str>, model: Option<&str>, anger: i32) -> Result<Vec<u8>> {
     let k = key();
     if k.is_empty() {
         return Err(anyhow!("Нет ключа Fish Audio."));
@@ -105,7 +105,11 @@ pub async fn speak_pcm(text: &str, voice_id: Option<&str>, model: Option<&str>, 
         let err = resp.text().await.unwrap_or_default();
         return Err(anyhow!("Fish Audio ошибка {status}: {}", err.chars().take(200).collect::<String>()));
     }
-    let bytes = resp.bytes().await?;
+    Ok(resp.bytes().await?.to_vec())
+}
+
+pub async fn speak_pcm(text: &str, voice_id: Option<&str>, model: Option<&str>, anger: i32) -> Result<Vec<f32>> {
+    let bytes = speak_pcm_bytes(text, voice_id, model, anger).await?;
     let mut samples = Vec::with_capacity(bytes.len() / 2);
     for ch in bytes.chunks_exact(2) {
         let v = i16::from_le_bytes([ch[0], ch[1]]);

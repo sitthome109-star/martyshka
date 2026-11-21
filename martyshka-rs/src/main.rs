@@ -1,6 +1,8 @@
 //! Мартышка на Rust — единое нативное приложение:
 //!   - по умолчанию (Windows): окно WebView2 с агентом-программистом, памятью, опытом и голосом Fish Audio;
+//!   - --govorilka: прямой 24/7 WebSocket-бот Говорилки (botgw) без GUI и кабелей;
 //!   - --telegram: автономный 24/7 Telegram-сервис без окна;
+//!   - --server: 24/7 серверный режим (Говорилка + Telegram одновременно);
 //!   - --ask "вопрос": быстрый запрос из консоли.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
@@ -10,6 +12,7 @@ mod commands;
 mod config;
 mod deepseek;
 mod fish;
+mod govorilka_ws;
 mod growth;
 mod longmem;
 mod settings_ui;
@@ -26,6 +29,21 @@ use std::sync::Arc;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--govorilka") {
+        let rt = tokio::runtime::Runtime::new().expect("tokio");
+        rt.block_on(govorilka_ws::run_forever(Arc::new(AtomicBool::new(false))));
+        return;
+    }
+    if args.iter().any(|a| a == "--server") {
+        let rt = tokio::runtime::Runtime::new().expect("tokio");
+        rt.block_on(async {
+            tokio::join!(
+                govorilka_ws::run_forever(Arc::new(AtomicBool::new(false))),
+                telegram::run_forever(),
+            );
+        });
+        return;
+    }
     if args.iter().any(|a| a == "--telegram") {
         let rt = tokio::runtime::Runtime::new().expect("tokio");
         rt.block_on(telegram::run_forever());
@@ -118,6 +136,7 @@ fn run_desktop_ui() {
         stop: Arc<AtomicBool>,
         speak_stop: Arc<AtomicBool>,
         dictate_stop: Arc<AtomicBool>,
+        gov_stop: Arc<AtomicBool>,
     }
 
     let init_id = agent::new_chat_id();
@@ -128,6 +147,7 @@ fn run_desktop_ui() {
         stop: Arc::new(AtomicBool::new(false)),
         speak_stop: Arc::new(AtomicBool::new(false)),
         dictate_stop: Arc::new(AtomicBool::new(false)),
+        gov_stop: Arc::new(AtomicBool::new(true)),
     }));
 
     let rt_ipc = rt.clone();
@@ -160,10 +180,10 @@ fn run_desktop_ui() {
                             "theme": s.ui_theme,
                             "tab": "chat",
                             "voice": false,
-                            "gov": false
+                            "gov": govorilka_ws::is_running()
                         })
                     }
-                    "status_dots" => json!({"voice": false, "gov": false}),
+                    "status_dots" => json!({"voice": false, "gov": govorilka_ws::is_running()}),
                     "balances" => json!({"deepseek": deepseek::balance().await, "fish": fish::credits().await}),
                     "usage_info" => {
                         let u = deepseek::usage();
@@ -495,7 +515,77 @@ fn run_desktop_ui() {
                             .spawn();
                         json!({"ok": true})
                     }
-                    "gov_info" => json!({"nick": "Мартышка", "status": "Говорилка на Rust ждёт Bot API", "running": false, "cable": true, "voice": "", "model": "deepseek-flash", "autostart": false, "log": "", "dialog": true, "fish_model": "", "fish_models": [["", "По умолчанию"]], "greet": true, "chime": false}),
+                    "gov_info" => {
+                        let s = config::get();
+                        json!({
+                            "nick": s.govorilka_nick,
+                            "status": govorilka_ws::status_text(),
+                            "running": govorilka_ws::is_running(),
+                            "cable": true,
+                            "voice": s.govorilka_voice_id,
+                            "model": s.govorilka_model,
+                            "autostart": false,
+                            "log": govorilka_ws::recent_log(80),
+                            "dialog": true,
+                            "fish_model": s.govorilka_fish_model,
+                            "fish_models": [
+                                ["", "По умолчанию (из Настроек)"],
+                                ["s2.1-pro-free", "S2.1 Pro Free (бесплатно, без кредитов)"],
+                                ["s2-pro", "S2-Pro (высокое качество)"],
+                                ["s2-pro-beta", "Drama 3 (s2-pro-beta, максимум эмоций)"]
+                            ],
+                            "greet": true,
+                            "chime": false
+                        })
+                    }
+                    "gov_action" => {
+                        let act = args.first().and_then(Value::as_str).unwrap_or("");
+                        let val = args.get(1);
+                        match act {
+                            "join" => {
+                                if govorilka_ws::is_running() {
+                                    json!({"ok": true, "message": "Мартышка уже на сервере напрямую!"})
+                                } else {
+                                    let stop = {
+                                        let mut g = st.lock();
+                                        let ns = Arc::new(AtomicBool::new(false));
+                                        g.gov_stop = ns.clone();
+                                        ns
+                                    };
+                                    tokio::spawn(govorilka_ws::run_forever(stop));
+                                    json!({"ok": true, "message": "Подключаюсь напрямую к Говорилке (botgw)!"})
+                                }
+                            }
+                            "leave" | "quit" => {
+                                st.lock().gov_stop.store(true, Ordering::Relaxed);
+                                govorilka_ws::silence();
+                                json!({"ok": true, "message": "Отключаюсь от Говорилки."})
+                            }
+                            "silence" => {
+                                govorilka_ws::silence();
+                                json!({"ok": true, "message": "Замолчала!"})
+                            }
+                            "morni" => {
+                                govorilka_ws::trigger_morni();
+                                json!({"ok": true, "message": "Режим разговора с Морни включён на 4 минуты!"})
+                            }
+                            "model" => {
+                                let m = val.and_then(Value::as_str).unwrap_or(deepseek::FLASH).to_string();
+                                let mut mp = Map::new();
+                                mp.insert("GOVORILKA_MODEL".into(), json!(m));
+                                let _ = config::patch(mp);
+                                json!({"ok": true, "message": format!("Модель для Говорилки: {m}")})
+                            }
+                            "fish_model" => {
+                                let fm = val.and_then(Value::as_str).unwrap_or("").to_string();
+                                let mut mp = Map::new();
+                                mp.insert("GOVORILKA_FISH_MODEL".into(), json!(fm));
+                                let _ = config::patch(mp);
+                                json!({"ok": true, "message": "Движок озвучки обновлён ✓"})
+                            }
+                            _ => json!({"ok": true, "message": "Готово ✓"}),
+                        }
+                    }
                     _ => json!({"ok": false}),
                 };
                 let js = format!("window.__rsResolve({req_id}, true, {res});");
@@ -549,5 +639,21 @@ mod tests {
     fn test_fish_prepare_keeps_russian_and_pair_tags() {
         let s = fish::prepare_text("{с усмешкой} Привет <whisper>тихо</whisper>!");
         assert_eq!(s, "[с усмешкой] Привет <whisper>тихо</whisper>!");
+    }
+
+    #[test]
+    fn test_pcm48k_to_wav16k_header_and_size() {
+        // 300 сэмплов @ 48кГц (600 байт) -> 100 сэмплов @ 16кГц (200 байт) + 44 байта заголовка WAV
+        let pcm48 = vec![0u8; 600];
+        let wav = govorilka_ws::pcm48k_to_wav16k(&pcm48);
+        assert_eq!(&wav[0..4], b"RIFF");
+        assert_eq!(&wav[8..12], b"WAVE");
+        assert_eq!(wav.len(), 244);
+    }
+
+    #[test]
+    fn test_govorilka_clean_reply_tags() {
+        let out = govorilka_ws::clean_reply_tags("[ТОН: 0] {весело} Привет, брат! [МОЛЧУ]", "sitth");
+        assert_eq!(out, "{весело} Привет, брат!");
     }
 }

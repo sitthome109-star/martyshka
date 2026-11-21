@@ -64,7 +64,22 @@ pub struct Settings {
     pub studio_disabled_groups: Vec<String>,
     #[serde(default = "d_theme", rename = "UI_THEME")]
     pub ui_theme: String,
+
+    #[serde(default, rename = "GOVORILKA_BOT_URL")]
+    pub govorilka_bot_url: String,
+    #[serde(default, rename = "GOVORILKA_BOT_TOKEN")]
+    pub govorilka_bot_token: String,
+    #[serde(default = "d_name", rename = "GOVORILKA_NICK")]
+    pub govorilka_nick: String,
+    #[serde(default, rename = "GOVORILKA_VOICE_ID")]
+    pub govorilka_voice_id: String,
+    #[serde(default = "d_gov_model", rename = "GOVORILKA_MODEL")]
+    pub govorilka_model: String,
+    #[serde(default, rename = "GOVORILKA_FISH_MODEL")]
+    pub govorilka_fish_model: String,
 }
+
+fn d_gov_model() -> String { "deepseek-flash".into() }
 
 fn d_name() -> String { "Мартышка".into() }
 fn d_nick() -> String { "братан".into() }
