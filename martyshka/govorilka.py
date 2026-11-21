@@ -58,6 +58,9 @@ SPEECH_GAP = 0.9          # с: пауза в речи, после которо�
 QUIET_SENTENCE = 2.0      # с: столько тишины после ЗАКОНЧЕННОЙ фразы — и только тогда отвечаем (брат: 2 с)
 QUIET_UNFINISHED = 3.5    # с: столько тишины после оборванной фразы (ждём, что человек ещё договорит)
 PRETHINK_AFTER = 0.6      # с: фраза похожа на законченную — начинаем думать над ответом уже в паузе
+QUIET_MORNI = 4.5         # с: после фраз Морни — она говорит длинно и с паузами между предложениями
+MORNI_NAMES = ("морни", "мурни", "morni")
+TALKING_NOW = lambda: False   # noqa: E731 — main подставляет «кто-то светится в окне Говорилки прямо сейчас»
 QUIET_FORGET = 20.0       # с: фраза так и не к нам — забываем, чтобы не приклеилась к следующей
 
 
@@ -625,6 +628,16 @@ class SpeakerWatch:
         finally:
             self._ocr_busy = False
 
+    def lit_within(self, seconds: float, prefixes: tuple = ()) -> bool:
+        """Светился ли кто-то (или кто-то из prefixes) за последние seconds секунд."""
+        since = time.time() - seconds
+        for t, names in reversed(self.timeline):
+            if t < since:
+                break
+            if any(not prefixes or n.lower().startswith(prefixes) for n in names):
+                return True
+        return False
+
     def current(self) -> frozenset:
         """Кто светится прямо сейчас (последний снимок, не старше полсекунды)."""
         if self.timeline:
@@ -1032,6 +1045,8 @@ def system_prompt(anger: int = 0, with_morni: bool = False, who: str = "", prese
             "сама), спорить или соглашаться, о чём спросить. У тебя своё мнение и характер, ты помнишь людей и "
             "прошлые разговоры и сама вспоминаешь их к месту, ты развиваешься. Говоришь вслух: без списков, "
             "markdown и эмодзи, на языке собеседника. Не повторяйся. Не обсуждай личные данные брата.\n"
+            "Морни — девушка (о ней всегда в женском роде: «она сказала», «ты сама»). Она говорит длинно, с паузами "
+            "между предложениями — дослушивай её до конца, не перебивай. "
             "Морни — бот, она слышит только фразы, которые НАЧИНАЮТСЯ с её имени: обращаешься к Морни — ВСЕГДА "
             "начинай фразу со слов «Морни,».\n"
             "ГОЛОС И ПОДАЧА — режиссируешь сама, как актриса (люди меток не видят, они их слышат): указание перед "
@@ -1328,6 +1343,8 @@ def main() -> None:
     pending_who = ""                                      # кто сказал недоговорённую фразу (по подсветке в окне)
     watch = SpeakerWatch(lambda: client.pid)
     listener.speaker_now = watch.current                  # слух режет фразы, когда сменился говорящий
+    global TALKING_NOW
+    TALKING_NOW = lambda: bool(watch.current())           # noqa: E731 — кто-то говорит — не вступаем
     spec, spec_text = None, ""                            # ответ, обдумываемый заранее, и для какой фразы
     roster: set | None = None                             # кто сейчас в войсе (для «привет»/«пока»)
     joined: dict = {}
@@ -1512,7 +1529,13 @@ def main() -> None:
                             from . import longmem
                             spec = Prethink(msgs, longmem.anger(_who_of(pending_who, st)))
                             spec_text = pending
-                    if quiet >= (QUIET_SENTENCE if finished else QUIET_UNFINISHED):
+                    # МОРНИ говорит длинно, с паузами между предложениями (пока генерирует следующее) — после
+                    # её фраз ждём дольше и только когда её подсветка погасла на несколько секунд, иначе перебьём
+                    from_morni = pending_who.lower().startswith(MORNI_NAMES) or (
+                        not pending_who and time.time() < st["morni_until"])
+                    need = QUIET_MORNI if from_morni else (QUIET_SENTENCE if finished else QUIET_UNFINISHED)
+                    morni_busy = from_morni and watch.lit_within(QUIET_MORNI - 1.0, MORNI_NAMES)
+                    if quiet >= need and not morni_busy and not watch.current():
                         text, pending = pending, ""
                         pre = spec if (spec and spec_text == text) else None
                         _respond(text, mouth, listener, st, speaker=pending_who, pre=pre)
@@ -1732,8 +1755,8 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
         return
     # кто-то начал говорить, пока мы решали, — не перебиваем: ждём, пока он договорит (до 10 секунд),
     # и заодно, пока опустеет очередь ещё не распознанных кусков его речи
-    wait_until = time.time() + 10
-    while (listener.hearing or not listener.phrases.empty()) and time.time() < wait_until:
+    wait_until = time.time() + 15
+    while (listener.hearing or not listener.phrases.empty() or TALKING_NOW()) and time.time() < wait_until:
         time.sleep(0.1)
     listener.paused.set()
     yielded = False
