@@ -262,6 +262,25 @@ class TestNewStudioAndTelegramFeatures(unittest.TestCase):
         self.assertIn("ТВОЙ ХОЗЯИН", prompt)
         self.assertIn("sitth", prompt)
 
+    def test_fish_tune_text_and_prosody(self):
+        from martyshka import fish
+        # Для бесплатной s2.1 русские теги переводятся в канонические английские
+        s2 = fish.tune_text("[с усмешкой] Привет! [смешок] Как дела? [пауза]", fish.FREE)
+        self.assertIn("[chuckle]", s2)
+        self.assertIn("[pause]", s2)
+        # Для Drama 3 сохраняется богатая русская режиссура
+        dr = fish.tune_text("[холодно, с усмешкой] Ну ты и выдал.", fish.DRAMA)
+        self.assertIn("[холодно, с усмешкой]", dr)
+        # Динамическая просодия
+        p_ang = fish.prosody_for("[angry] Хватит!", fish.FREE, anger=4)
+        p_wh = fish.prosody_for("<whisper>Тихо…</whisper>", fish.DRAMA, anger=0)
+        self.assertGreater(p_ang["speed"], 1.0)
+        self.assertLess(p_wh["speed"], 1.0)
+        self.assertGreaterEqual(p_wh["temperature"], 0.9)
+        # mood_pick включает Drama 3 для шёпота/хохота/драмы
+        _, _, mdl = fish.mood_pick("[хохочет] Ха-ха!", "v1", fish.FREE, anger=0)
+        self.assertEqual(mdl, fish.DRAMA)
+
     def test_govorilka_anger_does_not_attack_or_grow_wrongly(self):
         from unittest import mock
         from martyshka import govorilka as g

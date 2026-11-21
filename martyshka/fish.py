@@ -107,20 +107,101 @@ def _explain(status: int, body: str) -> str:
     return f"Fish Audio ответил ошибкой {status}: {body[:200]}"
 
 
+# Маппинг русских меток подачи/звуков → канонические теги Fish Audio S2.1 (на них бесплатная s2.1-pro-free
+# реагирует намного ярче и точнее, чем на длинные русские ремарки; Drama 3 понимает всё сама и остаётся как есть).
+_RU_SOUND_MAP = [
+    (re.compile(r"хохоч|залива|ржач|рж[её]т|громк\w*\s+смех", re.I), "[bursting into laughter]"),
+    (re.compile(r"фальшив\w*\s+смех", re.I), "[chuckle] [sarcastic]"),
+    (re.compile(r"смешок|усмех|ухмыл|хихик|сдержива\w*\s+смех", re.I), "[chuckle]"),
+    (re.compile(r"сме[хёя]|laugh", re.I), "[laughing]"),
+    (re.compile(r"тяж[её]л\w*\s+вздох|глубок\w*\s+вздох", re.I), "[deep sigh]"),
+    (re.compile(r"вздох|вздыха|sigh", re.I), "[sigh]"),
+    (re.compile(r"вдох|дрожащ\w*\s+вдох|ахнул|gasp", re.I), "[gasp]"),
+    (re.compile(r"фырк|хмык|цок|презр|scoff|snort", re.I), "[scoff]"),
+    (re.compile(r"длинн\w*\s+пауз|долг\w*\s+пауз|long[- ]?break", re.I), "[long-break]"),
+    (re.compile(r"пауз|pause|break", re.I), "[pause]"),
+    (re.compile(r"зев|yawn", re.I), "[yawn]"),
+    (re.compile(r"кашл|кашел|cough", re.I), "[cough]"),
+    (re.compile(r"всхлип|плач|слез|слёз|sob|cry", re.I), "[sobbing]"),
+    (re.compile(r"по[её]т|пою|напева|песн|мелоди|sing|hum", re.I), "[singing]"),
+    (re.compile(r"ш[её]пот|тихо|вполголос|заговорщ|whisper", re.I), "[whispering]"),
+    (re.compile(r"крич|ор[её]т|ярост|бешен|shout|yell|scream", re.I), "[shouting]"),
+    (re.compile(r"зло|зл[оы]|раздраж|нажим|резк|угроз|жестк|жёстк|angry", re.I), "[angry]"),
+    (re.compile(r"ядовит|насмеш|изд[её]в|сарказ|саркаст|ехид|колюч|сухо|холодн|sarcastic", re.I), "[sarcastic]"),
+    (re.compile(r"весел|радост|восторг|азарт|задор|excited|happy", re.I), "[excited]"),
+    (re.compile(r"груст|печал|устал|обиж|sad", re.I), "[sad]"),
+    (re.compile(r"удив|шокир|изумл|surpris", re.I), "[surprised]"),
+    (re.compile(r"тепл|мягк|нежн|ласков|soft|warm", re.I), "[soft]"),
+    (re.compile(r"игрив|хитр|кокет|лукав|playful", re.I), "[playful]"),
+]
+_BRACKET_RE = re.compile(r"\[([^\]]{1,95})\]")
+_CYR_RE = re.compile(r"[а-яё]", re.I)
+
+
+def tune_text(text: str, model: str | None) -> str:
+    """Адаптировать метки эмоций под конкретную модель Fish Audio:
+    - Drama 3 отлично понимает свободные русские режиссёрские ремарки и парные теги — оставляем богатый оригинал.
+    - S2.1 Pro / Free намного выразительнее реагирует на канонические английские теги — переводим русские метки в них."""
+    use = tts_model(model)
+    if use == DRAMA:
+        return text
+
+    def repl(m: re.Match) -> str:
+        inner = m.group(1).strip()
+        if not _CYR_RE.search(inner):
+            return m.group(0)                           # уже английский тег — оставляем как есть
+        tags: list[str] = []
+        for rx, tag in _RU_SOUND_MAP:
+            if rx.search(inner) and tag not in tags:
+                tags.append(tag)
+                if len(tags) >= 2:                      # не больше 2 тегов на одну метку, чтобы не перегружать
+                    break
+        return " ".join(tags) if tags else m.group(0)
+
+    return _BRACKET_RE.sub(repl, text)
+
+
+def prosody_for(text: str, model: str | None, anger: int = 0) -> dict:
+    """Подобрать живые параметры (temperature, top_p, chunk_length, speed) под модель, эмоцию и злость."""
+    use = tts_model(model)
+    is_drama = use == DRAMA
+    temp = 0.92 if is_drama else 0.86
+    top_p = 0.88 if is_drama else 0.86
+    chunk_len = 280 if is_drama else 260
+    speed = 1.0
+
+    low = (text or "").lower()
+    if anger >= 3 or re.search(r"\[(angry|shouting|зло|крич|ор[её]т|ярост|резк)|<forceful>", low):
+        temp = min(0.96, temp + 0.05)
+        speed = 1.05
+    elif re.search(r"\[(laughing|bursting into laughter|chuckle|excited|singing|смех|хохоч|весел|по[её]т)", low):
+        temp = min(0.96, temp + 0.05)
+        speed = 1.02
+    if re.search(r"\[(whispering|whisper|sad|deep sigh|ш[её]пот|груст|устал|медлен|задумч)|<(whisper|slow|soft)>", low):
+        speed = min(speed, 0.93)
+    elif re.search(r"\[[^\]]*(быстр|взахл[её]б)|<fast>", low):
+        speed = max(speed, 1.08)
+    return {"temperature": round(temp, 2), "top_p": round(top_p, 2), "chunk_length": chunk_len, "speed": round(speed, 2)}
+
+
 def speak(text: str, voice_id: str | None = None, speed: float | None = None, temperature: float | None = None,
           latency: str = "balanced", sample_rate: int = SAMPLE_RATE, should_stop=None,
-          model: str | None = None) -> Iterator[np.ndarray]:
+          model: str | None = None, top_p: float | None = None, chunk_length: int | None = None,
+          anger: int = 0) -> Iterator[np.ndarray]:
     """Озвучить текст. Звук приходит кусочками (float32, моно, 24 кГц) — можно играть сразу.
     model — модель озвучки (s2.1-pro-free / s2.1-pro / drama-3); не задана — из настроек голоса."""
     global _free_failed, _drama_off_until
-    body = {"text": text, "reference_id": voice_id or getattr(config, "VOICE_ID", "") or DEFAULT_VOICE,
-            "format": "pcm", "sample_rate": sample_rate, "latency": latency, "normalize": True,
-            # выразительность и темп настроек больше не имеют — подачу Мартышка задаёт сама метками в тексте
-            "temperature": float(temperature if temperature is not None else 0.8),
-            "top_p": 0.8, "chunk_length": 200,
-            "prosody": {"speed": float(speed if speed is not None else 1.0), "volume": 0, "normalize_loudness": True}}
     for attempt in range(3):
         use = tts_model(model)
+        tuned = tune_text(text, use)
+        pr = prosody_for(text, use, anger=anger)
+        body = {"text": tuned, "reference_id": voice_id or getattr(config, "VOICE_ID", "") or DEFAULT_VOICE,
+                "format": "pcm", "sample_rate": sample_rate, "latency": latency, "normalize": True,
+                "temperature": float(temperature if temperature is not None else pr["temperature"]),
+                "top_p": float(top_p if top_p is not None else pr["top_p"]),
+                "chunk_length": int(chunk_length if chunk_length is not None else pr["chunk_length"]),
+                "prosody": {"speed": float(speed if speed is not None else pr["speed"]),
+                            "volume": 0, "normalize_loudness": True}}
         try:
             with http().stream("POST", API + "/v1/tts", headers=_headers(use), json=body) as r:
                 if r.status_code != 200:
@@ -154,11 +235,14 @@ def speak(text: str, voice_id: str | None = None, speed: float | None = None, te
 
 
 # ---------- голос под настроение ----------
-# Мартышка сама решает подачу: {драма} перед фразой — эту фразу играет Drama 3; пение ({поёт…}) — тоже Drama;
-# в злости (от MOOD_ANGRY_FROM) — Drama 3 и «злой» голос (ANGRY_VOICE_ID, если задан). Обычные фразы — как в
-# настройках (обычно бесплатная модель), так Drama тратит деньги только там, где она слышна.
+# Мартышка сама решает подачу: {драма} перед фразой — эту фразу играет Drama 3; пение ({поёт…}), сильный смех,
+# шёпот, крик и злость (от MOOD_ANGRY_FROM) — тоже Drama 3 (и «злой» голос ANGRY_VOICE_ID в злости, если задан).
+# Если кредитов на Drama нет — fish.speak сам бесшовно переключится на бесплатную s2.1-pro-free.
 DRAMA_MARK_RE = re.compile(r"\[\s*(драма|drama)\s*\]\s*", re.I)
 SING_RE = re.compile(r"\[[^\]]*(по[её]т|пою|напева|песн|мелоди|sing|hum)[^\]]*\]", re.I)
+PEAK_EMO_RE = re.compile(
+    r"\[[^\]]*(хохоч|залива|крич|ор[её]т|ярост|ш[её]пот|всхлип|bursting into laughter|shouting|whispering|sobbing)[^\]]*\]"
+    r"|<whisper>|<forceful>", re.I)
 
 
 def mood_pick(text: str, voice_id: str, model: str | None, anger: int = 0) -> tuple[str, str, str | None]:
@@ -170,7 +254,7 @@ def mood_pick(text: str, voice_id: str, model: str | None, anger: int = 0) -> tu
     angry = anger >= int(getattr(config, "MOOD_ANGRY_FROM", 3))
     if angry and getattr(config, "ANGRY_VOICE_ID", ""):
         voice_id = config.ANGRY_VOICE_ID
-    if marked or angry or SING_RE.search(text):
+    if marked or angry or SING_RE.search(text) or PEAK_EMO_RE.search(text):
         model = DRAMA
     return text, voice_id, model
 

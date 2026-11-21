@@ -1000,7 +1000,7 @@ class Mouth:
                 said, vid, mdl = self.fish.mood_pick(text, voice_id(), fish_model(), self.anger)
                 audio = _take_presynth(text, vid, mdl)          # озвучена заранее, во время паузы?
                 if audio is None:
-                    audio = self.fish.speak_all(said, vid, temperature=0.75, model=mdl)
+                    audio = self.fish.speak_all(said, vid, model=mdl, anger=self.anger)
                 if len(audio) and not self.stopped.is_set():
                     self.synth_stats.append((len(audio) / self.sr, time.time() - t0))
                     self._audio_q.put(audio)
@@ -1010,19 +1010,26 @@ class Mouth:
                 self._text_q.task_done()
 
     def _play_loop(self) -> None:
+        fade = int(self.sr * 0.005)                             # 5 мс мягкий вход/выход — без микро-щелчков на стыках
         while True:
             audio = self._audio_q.get()
             try:
                 if not self.first_audio_at:
                     self.first_audio_at = time.time()
-                audio = np.clip(audio * 0.9, -1, 1).reshape(-1, 1)
+                audio = np.clip(audio * 0.92, -1, 1).astype(np.float32)
+                if len(audio) > fade * 2:
+                    ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+                    audio = audio.copy()
+                    audio[:fade] *= ramp
+                    audio[-fade:] *= ramp[::-1]
+                audio = audio.reshape(-1, 1)
                 step = self.sr // 10                            # по 0,1 с — чтобы замолчать сразу, если перебили
                 for i in range(0, len(audio), step):
                     if self.stopped.is_set():
                         break
                     self.stream.write(audio[i:i + step])
                 if not self.stopped.is_set():
-                    self.stream.write(np.zeros((int(self.sr * 0.12), 1), dtype=np.float32))
+                    self.stream.write(np.zeros((int(self.sr * 0.06), 1), dtype=np.float32))
             finally:
                 self._audio_q.task_done()
 
@@ -1072,9 +1079,12 @@ class Mouth:
         time.sleep(0.4)
         return False
 
-    # Короткие «Ага» заготовлены заранее: звучат сразу, пока мозг думает (по уровню злости)
-    FILLERS = {0: ["Ага.", "Так-так.", "Хм, слушаю.", "Да-да?"], 2: ["Чего тебе?", "Ну-ну.", "Ага, щас.", "Ой, всё."],
-               4: ["Ебать.", "Ну пиздец.", "Блядь, опять ты.", "Охуенно предсказуемо."]}
+    # Короткие «Ага» заготовлены заранее: звучат сразу с живой эмоцией, пока мозг думает (по уровню злости)
+    FILLERS = {
+        0: ["[chuckle] Ага.", "[playful] Так-так.", "[curious] Хм, слушаю.", "[excited] Да-да?"],
+        2: ["[scoff] Чего тебе?", "[sarcastic] Ну-ну.", "[sarcastic] Ага, щас.", "[sigh] Ой, всё."],
+        4: ["[angry] Ебать.", "[deep sigh] Ну пиздец.", "[angry] Блядь, опять ты.", "[sarcastic] Охуенно предсказуемо."],
+    }
 
     def prepare_fillers(self) -> None:
         self._filler_voice = voice_id()
@@ -1083,7 +1093,7 @@ class Mouth:
             fillers[lvl] = []
             for w in words:
                 try:
-                    a = self.fish.speak_all(w, self._filler_voice, model=fish_model())
+                    a = self.fish.speak_all(w, self._filler_voice, model=fish_model(), anger=lvl)
                     if len(a):
                         fillers[lvl].append(a)
                 except Exception:
@@ -1286,14 +1296,22 @@ def system_prompt(anger: int = 0, with_morni: bool = False, who: str = "", prese
             "Морни — бот, она слышит только реплики, которые НАЧИНАЮТСЯ с её имени: обращаешься к Морни — "
             "начинай реплику со слов «Морни,» (один раз в начале; дальше в той же реплике имя не повторяй, а "
             "сразу после «Морни,» каждый раз заходи по-новому).\n"
-            "ГОЛОС И ПОДАЧА — режиссируешь сама, как актриса (люди меток не видят, они их слышат): указание перед "
-            "фразой в фигурных скобках своими словами, можно по-русски — {холодно и насмешливо}, {сдерживая смех}, "
-            "{медленно, с угрозой в голосе}, {быстро, взахлёб}; звуки и паузы там, где они звучат — {смех}, "
-            "{смешок}, {хохочет}, {фальшивый смех}, {вздох}, {тяжёлый вздох}, {фыркает}, {хмыкает}, {цокает}, "
-            "{пауза}, {длинная пауза}, {зевает}; отдельные слова — <whisper>…</whisper>, <emphasis>…</emphasis>, "
-            "<stress>…</stress>, <soft>…</soft>, <forceful>…</forceful>, <slow>…</slow>, <fast>…</fast>. "
-            "Сколько и когда — решаешь сама. {драма} в начале фразы — эту фразу сыграет самая живая модель голоса "
-            "(Drama 3, платная) — ставь, когда фраза правда того стоит: крик, слёзы, ярость, сильный смех. "
+            "ГОЛОС, ИНТОНАЦИЯ И ЭМОЦИИ — режиссируешь себя как топовая актриса озвучки (люди меток не видят, они "
+            "их СЛЫШАТ — используй всё, чтобы звучать по-настоящему живо, с характером и перепадами, а не ровно):\n"
+            "- Подача и настроение в фигурных скобках перед фразой И при смене эмоции внутри ответа: {с усмешкой}, "
+            "{игриво}, {холодно и насмешливо}, {сдерживая смех}, {удивлённо}, {тепло}, {раздражённо}, {зло}, "
+            "{шёпотом}, {быстро, взахлёб}, {медленно, с угрозой}, {задумчиво}, {весело}. Можно менять эмоцию прямо "
+            "посреди ответа: начала колко — потом {пауза} {тепло} или {смешок}.\n"
+            "- Живые звуки и паузы ровно там, где они к месту: {смех}, {смешок}, {хохочет}, {фальшивый смех}, "
+            "{вздох}, {тяжёлый вздох}, {вдох}, {фыркает}, {хмыкает}, {пауза}, {длинная пауза}, {зевает}, {кашель}.\n"
+            "- Акценты на отдельных словах (сильно оживляют интонацию!): <emphasis>главное слово</emphasis>, "
+            "<whisper>шёпотом по секрету</whisper>, <slow>растянуто и ехидно</slow>, <fast>быстро на эмоциях</fast>, "
+            "<forceful>жёстко с нажимом</forceful>, <soft>мягко</soft>, <stress>ударное слово</stress>.\n"
+            "- Живая пунктуация: многоточия «…» для задумчивых пауз и иронии, «?!» для возмущения, тире «—» для "
+            "ритма и панчлайна. Пример: «{с усмешкой} Погоди… ты это сейчас <slow>серьёзно</slow>?! {смешок} "
+            "<fast>Ну ты и выдал</fast>, я, бля, даже не знаю, смеяться или плакать.»\n"
+            "- {драма} в начале фразы — включает самую кинематографичную модель (Drama 3) для пиковых моментов: "
+            "крик, хохот, шёпот, ярость, сильный сарказм, пение.\n"
             "ПЕНИЕ: попросили спеть или самой захотелось — пой: {поёт, мелодично, весело} и строки; лучше "
             "сочиняй свои на ходу (про людей на сервере, про момент), чужие песни — максимум пару строк. "
             "Пение и злость голос и так сыграет живее. Попросят спеть ПРО КОГО-ТО — сочини песню именно про этого "
@@ -1459,7 +1477,7 @@ def _presynth(sentence: str, anger: int) -> None:
 
     def run():
         try:
-            audio = fish.speak_all(said, vid, temperature=0.75, model=mdl)
+            audio = fish.speak_all(said, vid, model=mdl, anger=anger)
             with _PRESYNTH_LOCK:
                 for k in [k for k, (t, _) in _PRESYNTH.items() if time.time() - t > 60]:
                     del _PRESYNTH[k]
@@ -1648,7 +1666,19 @@ def reply_stream(history: list[dict], mouth: "Mouth", anger: int = 0, with_morni
         st_["first"] = False
         st_["spoken"] += n
         kept.append(s_)
-        mouth.queue(s_)
+        # Первое предложение отдаём сразу (быстрый первый звук + совпадение с _presynth).
+        # Следующие короткие предложения склеиваем в связные блоки до ~200 знаков (если не меняется {эмоция}),
+        # чтобы Fish Audio держал единую живую интонацию, а не рубил фразу по точкам.
+        if len(kept) == 1:
+            mouth.queue(s_)
+        else:
+            starts_new_cue = bool(re.match(r"^\s*\{", s_))
+            if voice_buf[0] and (starts_new_cue or len(voice_buf[0]) + len(s_) > 210):
+                mouth.queue(voice_buf[0])
+                voice_buf[0] = s_
+            else:
+                voice_buf[0] = f"{voice_buf[0]} {s_}".strip()
+    voice_buf = [""]
     msgs = build_msgs(history, anger, with_morni, who, present, note)
     if pre is not None and pre.matches(msgs):
         chunks = pre.chunks()                     # ответ уже начали обдумывать во время паузы — берём его
@@ -1680,6 +1710,8 @@ def reply_stream(history: list[dict], mouth: "Mouth", anger: int = 0, with_morni
             say_piece(s_)
     if buf.strip():
         say_piece(buf)
+    if voice_buf[0]:
+        mouth.queue(voice_buf[0])
     # служебные метки ([ТОН], [ЗАПОМНИ О] …) — из всего ответа, даже из несказанного хвоста
     tags = " ".join(re.findall(r"\[[^\]]*\]", full))
     return re.sub(r"\s+", " ", (tags + " " + " ".join(kept))).strip()

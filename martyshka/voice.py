@@ -191,7 +191,7 @@ class Voice:
                     except Exception:
                         mood = 0
                     said, vid, mdl = fish.mood_pick(text, self.voice_id or getattr(config, "VOICE_ID", ""), None, mood)
-                    for audio in fish.speak(said, vid, should_stop=self._interrupt.is_set, model=mdl):
+                    for audio in fish.speak(said, vid, should_stop=self._interrupt.is_set, model=mdl, anger=mood):
                         if self._interrupt.is_set():
                             break
                         self._audio_q.put(audio)
