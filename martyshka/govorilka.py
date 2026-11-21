@@ -57,6 +57,7 @@ CHIME_IN = False          # злая Мартышка сама влезает в
 SPEECH_GAP = 0.9          # с: пауза в речи, после которой кусок считаем законченным (нарезка на фразы)
 QUIET_SENTENCE = 2.0      # с: столько тишины после ЗАКОНЧЕННОЙ фразы — и только тогда отвечаем (брат: 2 с)
 QUIET_UNFINISHED = 3.5    # с: столько тишины после оборванной фразы (ждём, что человек ещё договорит)
+PRETHINK_AFTER = 0.6      # с: фраза похожа на законченную — начинаем думать над ответом уже в паузе
 QUIET_FORGET = 20.0       # с: фраза так и не к нам — забываем, чтобы не приклеилась к следующей
 
 
@@ -172,7 +173,8 @@ def _reload_settings() -> None:
         return
     for k in ("GOVORILKA_VOICE_ID", "VOICE_ID", "GOVORILKA_MODEL", "GOVORILKA_FOLLOWUP", "GOVORILKA_MAX_CHAIN",
               "BRAIN_MODE", "DEEPSEEK_KEY", "FISH_KEY", "FISH_MODEL", "GOVORILKA_DIALOG", "GOVORILKA_FISH_MODEL",
-              "MOOD_VOICE", "MOOD_ANGRY_FROM", "ANGRY_VOICE_ID"):
+              "MOOD_VOICE", "MOOD_ANGRY_FROM", "ANGRY_VOICE_ID", "GOVORILKA_GREET", "GOVORILKA_CHIME",
+              "GOVORILKA_PRETHINK", "ECONOMY", "ECONOMY_BALANCE"):
         if k in saved:
             setattr(config, k, saved[k])
 
@@ -565,6 +567,7 @@ class SpeakerWatch:
         self.get_pid = get_pid
         self.timeline: collections.deque = collections.deque(maxlen=3000)   # (время, {имена говорящих})
         self.present: list[str] = []                                         # кто в голосовой комнате
+        self.in_room = False                                                 # Мартышка в голосе и список прочитан
         self._sig, self._names = None, {}
         threading.Thread(target=self._loop, daemon=True).start()
 
@@ -586,7 +589,7 @@ class SpeakerWatch:
                 img = _snapshot(h)
                 rows, top = _voice_rows(img)
                 if not rows:
-                    self.present = []
+                    self.present, self.in_room = [], False
                     time.sleep(1.0)
                     continue
                 a = np.asarray(img)
@@ -598,6 +601,7 @@ class SpeakerWatch:
                     if len(names) == len(rows):
                         self._sig, self._names = sig, names
                         self.present = [n for n in names.values() if not self._me(n)]
+                        self.in_room = True
                         _log("система", "в войсе: " + ", ".join(names.values()))
                 if self._sig == sig:
                     talking = {self._names[y] for y, on in rows if on and y in self._names}
@@ -806,7 +810,9 @@ class Mouth:
                     continue
                 t0 = time.time()
                 said, vid, mdl = self.fish.mood_pick(text, voice_id(), fish_model(), self.anger)
-                audio = self.fish.speak_all(said, vid, temperature=0.75, model=mdl)
+                audio = _take_presynth(text, vid, mdl)          # озвучена заранее, во время паузы?
+                if audio is None:
+                    audio = self.fish.speak_all(said, vid, temperature=0.75, model=mdl)
                 if len(audio) and not self.stopped.is_set():
                     self.synth_stats.append((len(audio) / self.sr, time.time() - t0))
                     self._audio_q.put(audio)
@@ -934,6 +940,14 @@ TONE_RE = re.compile(r"\[\s*ТОН\s*:\s*(\d)\s*\]", re.I)
 WHO_RE = re.compile(r"\[\s*КТО\s*:\s*([^\]]{1,40})\]", re.I)
 ABOUT_RE = re.compile(r"\[\s*ЗАПОМНИ\s+О\s*:\s*([^|\]]+?)\s*\|\s*(.+?)\s*\]", re.I | re.S)
 ANY_TAG_RE = re.compile(r"\[[^\]]*\]?")
+TOPIC_RE = re.compile(r"\[\s*ИНТЕРЕС\s*:\s*([^|\]]+?)\s*\|\s*(.+?)\s*\]", re.I | re.S)
+# сама вмешивается в чужой разговор: прислушивается не чаще раза в CHIME_EVERY секунд, с такой вероятностью
+CHIME_EVERY = 120
+CHIME_CHANCE = 0.5
+# сама заговаривает, когда в войсе давно тихо (если рядом есть люди)
+QUIET_TALK_AFTER = 180
+QUIET_TALK_EVERY = 12 * 60
+GREET_AGAIN_AFTER = 15 * 60          # здороваться с тем же человеком не чаще
 MOOD_TALK = {
     0: "Ты в нормальном настроении.",
     1: "Ты слегка раздражена.",
@@ -969,7 +983,12 @@ def system_prompt(anger: int = 0, with_morni: bool = False, who: str = "", prese
             "(Drama 3, платная) — ставь, когда фраза правда того стоит: крик, слёзы, ярость, сильный смех. "
             "ПЕНИЕ: попросили спеть или самой захотелось — пой: {поёт, мелодично, весело} и строки; лучше "
             "сочиняй свои на ходу (про людей на сервере, про момент), чужие песни — максимум пару строк. "
-            "Пение и злость голос и так сыграет живее.\n"
+            "Пение и злость голос и так сыграет живее. Попросят спеть ПРО КОГО-ТО — сочини песню именно про этого "
+            "человека из того, что о нём помнишь (характер, привычки, любимые темы, смешные случаи с сервера), "
+            "по-дружески и смешно, куплет-два.\n"
+            "ЛЮДИ И ИХ ТЕМЫ: ты знаешь, кто о чём любит говорить (в памяти: «любит говорить о») — используй: "
+            "спрашивай об этом, шути на эту тему, сама заводи разговор. Поняла, чем человек увлекается, — в конце "
+            "[ИНТЕРЕС: имя | тема коротко].\n"
             "СЛУЖЕБНЫЕ МЕТКИ (их не слышат): в САМОМ начале ответа [ТОН: 0..5] — твоя злость на того, кто сейчас "
             "говорил. Как с тобой — так и ты: оскорбили — выше; говорят нормально — ниже; извинились — 0. "
             "Дружеские подколки от оскорблений отличай. Если понятно, кто говорил, — [КТО: имя]. Узнала о ком-то "
@@ -1003,8 +1022,118 @@ def system_prompt(anger: int = 0, with_morni: bool = False, who: str = "", prese
 EMOJI_RE = re.compile(r"[\U0001F000-\U0001FFFF☀-➿*_#`]+")
 
 
+def build_msgs(history: list[dict], anger: int, with_morni: bool, who: str, present: list[str] | None,
+               note: str = "") -> list[dict]:
+    last = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
+    msgs = [{"role": "system", "content": system_prompt(anger, with_morni, who, present, last)}] + history[-40:]
+    if note:
+        msgs.append({"role": "system", "content": note})
+    return msgs
+
+
+_PRESYNTH: dict = {}            # (текст, голос, модель) → (время, звук) — первая фраза, озвученная заранее
+_PRESYNTH_LOCK = threading.Lock()
+
+
+def _presynth(sentence: str, anger: int) -> None:
+    """Озвучить фразу заранее (в паузе). Mouth заберёт готовый звук, если скажет ровно её."""
+    from . import fish
+    from .voice import prepare_text
+    clean = prepare_text(sentence, "ru")
+    if not re.search(r"\w", clean):
+        return
+    said, vid, mdl = fish.mood_pick(clean, voice_id(), fish_model(), anger)
+    key = (clean, vid, mdl)
+
+    def run():
+        try:
+            audio = fish.speak_all(said, vid, temperature=0.75, model=mdl)
+            with _PRESYNTH_LOCK:
+                for k in [k for k, (t, _) in _PRESYNTH.items() if time.time() - t > 60]:
+                    del _PRESYNTH[k]
+                _PRESYNTH[key] = (time.time(), audio)
+        except Exception:
+            pass
+    with _PRESYNTH_LOCK:
+        if key in _PRESYNTH:
+            return
+        _PRESYNTH[key] = (time.time(), None)          # «уже озвучивается»
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _take_presynth(clean: str, vid: str, mdl, wait: float = 4.0):
+    """Забрать заранее озвученную фразу (подождать, если ещё озвучивается). None — нет такой."""
+    key = (clean, vid, mdl)
+    end = time.time() + wait
+    while time.time() < end:
+        with _PRESYNTH_LOCK:
+            item = _PRESYNTH.get(key)
+            if item is None:
+                return None
+            if item[1] is not None:
+                del _PRESYNTH[key]
+                return item[1]
+        time.sleep(0.03)
+    return None
+
+
+class Prethink:
+    """БЫСТРЕЕ ОТВЕЧАТЬ: пока идёт пауза «человек договорил?» (2 с), мозг уже пишет ответ — молча, в запас.
+    Если человек продолжил — запас выбрасываем; если пауза дошла до конца — ответ уже наполовину готов."""
+
+    def __init__(self, msgs: list[dict], anger: int = 0):
+        from . import deepseek
+        self.key = json.dumps(msgs[1:], ensure_ascii=False) + str(len(msgs))
+        self.items: list = []
+        self.done = threading.Event()
+        self.stopped = False
+
+        def run():
+            from .voice import split_ready_sentences
+            buf, first_sent = "", False
+            try:
+                for kind, val in deepseek.stream(msgs, model=brain_model(), think=False, temperature=0.95,
+                                                 max_tokens=4000, should_stop=lambda: self.stopped):
+                    self.items.append((kind, val))
+                    # первую фразу сразу отдаём голосу на озвучку — тоже заранее
+                    if kind == "text" and not first_sent:
+                        buf += EMOJI_RE.sub("", val)
+                        if buf.lstrip().startswith("[") and "]" not in buf:
+                            continue
+                        ready, buf = split_ready_sentences(buf, max_len=400)
+                        if ready:
+                            first_sent = True
+                            _presynth(ANY_TAG_RE.sub("", ready[0]).strip(), anger)
+            except Exception as e:
+                self.items.append(("error", e))
+            finally:
+                self.done.set()
+        threading.Thread(target=run, daemon=True).start()
+
+    def matches(self, msgs: list[dict]) -> bool:
+        # инструкция (время, память) могла чуть поменяться — сверяем сам разговор
+        return not self.stopped and self.key == json.dumps(msgs[1:], ensure_ascii=False) + str(len(msgs))
+
+    def cancel(self) -> None:
+        self.stopped = True
+
+    def chunks(self):
+        i = 0
+        while True:
+            if i < len(self.items):
+                kind, val = self.items[i]
+                i += 1
+                if kind == "error":
+                    raise val
+                yield kind, val
+            elif self.done.is_set():
+                return
+            else:
+                time.sleep(0.02)
+
+
 def reply_stream(history: list[dict], mouth: "Mouth", anger: int = 0, with_morni: bool = False, who: str = "",
-                 present: list[str] | None = None) -> str:
+                 present: list[str] | None = None, note: str = "", pre: "Prethink | None" = None) -> str:
     """Мозг пишет ответ потоком; каждое готовое предложение сразу уходит в голос. Возвращает весь текст
     (со служебными метками — их разбирает _respond). with_morni — первая фраза начинается с «Морни,»."""
     from . import deepseek
@@ -1022,11 +1151,15 @@ def reply_stream(history: list[dict], mouth: "Mouth", anger: int = 0, with_morni
                 s_ = f"{head}Морни, " + body[:1].lower() + body[1:]
         sent_first["done"] = True
         mouth.queue(s_)
-    last = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
-    msgs = [{"role": "system", "content": system_prompt(anger, with_morni, who, present, last)}] + history[-40:]
+    msgs = build_msgs(history, anger, with_morni, who, present, note)
+    if pre is not None and pre.matches(msgs):
+        chunks = pre.chunks()                     # ответ уже начали обдумывать во время паузы — берём его
+    else:
+        if pre is not None:
+            pre.cancel()
+        chunks = deepseek.stream(msgs, model=brain_model(), think=False, temperature=0.95, max_tokens=4000)
     full, buf = "", ""
-    for kind, val in deepseek.stream(msgs, model=brain_model(), think=False,
-                                     temperature=0.95, max_tokens=4000):
+    for kind, val in chunks:
         if kind != "text":
             continue
         piece = EMOJI_RE.sub("", val)
@@ -1133,6 +1266,11 @@ def main() -> None:
     relaunches = 0
     pending_who = ""                                      # кто сказал недоговорённую фразу (по подсветке в окне)
     watch = SpeakerWatch(lambda: client.pid)
+    spec, spec_text = None, ""                            # ответ, обдумываемый заранее, и для какой фразы
+    roster: set | None = None                             # кто сейчас в войсе (для «привет»/«пока»)
+    joined: dict = {}
+    greeted: dict = {}
+    last_quiet_talk = time.time()
 
     def save_state():
         STATE_FILE.write_text(json.dumps({"pid": os.getpid(), "client": client.pid, "in_voice": voice_state}),
@@ -1215,6 +1353,39 @@ def main() -> None:
                         pending = f"{pending} {text}".strip()
                         pending_at = time.time()
                         pending_who = name or pending_who
+                        if spec:                              # человек продолжил — заготовку ответа выбрасываем
+                            spec.cancel()
+                            spec = None
+                # ПРИВЕТ И ПОКА: кто зашёл в войс — поздороваться по имени, кто ушёл — попрощаться
+                if not watch.in_room:
+                    roster = None
+                elif getattr(config, "GOVORILKA_GREET", True) and not pending and not listener.hearing:
+                    now_set = {n for n in watch.present if not n.lower().startswith(("морни", "мурни", "morni"))}
+                    if roster is None:
+                        roster = now_set                      # кто уже сидел, когда зашла сама, — не здороваемся
+                        joined.update({n: time.time() for n in now_set})
+                    elif now_set != roster:
+                        came = [n for n in now_set - roster
+                                if time.time() - greeted.get(n, 0) > GREET_AGAIN_AFTER]
+                        gone = [n for n in roster - now_set if time.time() - joined.get(n, 0) > 60]
+                        for n in now_set - roster:
+                            joined[n] = time.time()
+                        roster = now_set
+                        if came:
+                            for n in came:
+                                greeted[n] = time.time()
+                            who_c = ", ".join(came)
+                            _speak_own(f"(в войс только что зашёл {who_c}. Поздоровайся по имени — коротко и "
+                                       "по-своему, можешь вспомнить что-то о нём или спросить про то, что он любит; "
+                                       "если ты на него зла — это слышно)", mouth, listener, st, who=came[0],
+                                       tag=f"привет: {who_c}")
+                            continue
+                        if gone:
+                            who_g = ", ".join(gone)
+                            _speak_own(f"(из войса только что вышел {who_g}. Попрощайся коротко — или скажи "
+                                       "остальным что-нибудь о нём по-дружески)", mouth, listener, st,
+                                       who=gone[0], tag=f"пока: {who_g}")
+                            continue
                 # кнопка в окне: брат велел начать разговор с Морни прямо сейчас (в любом режиме)
                 if MORNI_NOW_FLAG.exists() and not listener.hearing:
                     try:
@@ -1246,14 +1417,38 @@ def main() -> None:
                     _log("система", "сама начинаю разговор с Морни")
                     _respond("(в войсе тихо — заведи разговор с Морни: задай ей колкий или интересный вопрос, "
                              "можешь вспомнить что-то из прошлых разговоров)", mouth, listener, st, initiative=True)
+                # в войсе давно тихо, а люди сидят — сама решает, заговорить ли (о том, что им интересно)
+                people = [n for n in (roster or set())]
+                if (getattr(config, "GOVORILKA_CHIME", True) and watch.in_room and people and not pending
+                        and not listener.hearing and quiet_for > QUIET_TALK_AFTER
+                        and time.time() - last_quiet_talk > QUIET_TALK_EVERY):
+                    last_quiet_talk = time.time()
+                    _speak_own(f"(в войсе тихо уже несколько минут. Здесь: {', '.join(people)}. Хочешь — "
+                               "заговори с кем-то из них о том, что ему интересно (смотри «любит говорить о»), "
+                               "подколи или расскажи что-то своё. Не хочешь — ответь ровно [МОЛЧУ])",
+                               mouth, listener, st, who=people[0], tag="сама заговорила в тишине")
+                    continue
                 # отвечаем, только когда собеседник ТОЧНО договорил: фраза закончена, в очереди пусто
                 # (никаких ещё не распознанных кусков) и стоит тишина нужной длины
                 idle = pending and not listener.hearing and listener.phrases.empty()
                 if idle:
                     quiet = time.time() - max(pending_at, listener.last_voice_at)
-                    if quiet >= (QUIET_SENTENCE if sentence_finished(pending) else QUIET_UNFINISHED):
+                    finished = sentence_finished(pending)
+                    # БЫСТРЕЕ: фраза похожа на законченную — начинаем думать над ответом уже во время паузы
+                    if (spec is None and finished and quiet >= PRETHINK_AFTER
+                            and getattr(config, "GOVORILKA_PRETHINK", True)):
+                        msgs = _predict(pending, pending_who, st)
+                        if msgs:
+                            from . import longmem
+                            spec = Prethink(msgs, longmem.anger(_who_of(pending_who, st)))
+                            spec_text = pending
+                    if quiet >= (QUIET_SENTENCE if finished else QUIET_UNFINISHED):
                         text, pending = pending, ""
-                        _respond(text, mouth, listener, st, speaker=pending_who)
+                        pre = spec if (spec and spec_text == text) else None
+                        _respond(text, mouth, listener, st, speaker=pending_who, pre=pre)
+                        if spec:
+                            spec.cancel()
+                        spec = None
                         pending_who = ""
                     elif quiet >= QUIET_FORGET:
                         # фраза так и не к нам (не назвали по имени) — забываем, чтобы не приклеилась к следующей
@@ -1317,9 +1512,86 @@ def _hear(audio, hallucinations) -> str:
     return text
 
 
-def _respond(text, mouth, listener, st, initiative=False, speaker=""):
+def _who_of(speaker: str, st: dict) -> str:
+    from . import longmem
+    who = longmem.norm(speaker) if speaker else SERVER
+    # человек не назвался, но разговор продолжается — скорее всего, говорит тот же, кого узнали только что
+    if not speaker and st.get("last_who") and time.time() - st.get("last_who_at", 0) < config.GOVORILKA_FOLLOWUP + 15:
+        who = st["last_who"]
+    return who
+
+
+def _predict(text: str, speaker: str, st: dict) -> list[dict] | None:
+    """Ответит ли Мартышка на эту фразу (как решит _respond) — и если да, с какими сообщениями к мозгу.
+    Ничего не меняет: нужно, чтобы начать думать заранее, во время паузы."""
+    from . import longmem
+    who = _who_of(speaker, st)
+    now = time.time()
+    named = bool(NAME_RE.search(text))
+    same = named or (bool(st.get("dialog_with")) and who == st.get("dialog_with") and now < st.get("dialog_until", 0))
+    asked = bool(MORNI_TALK_RE.search(text)) and (named or now - st["last_reply_at"] < config.GOVORILKA_FOLLOWUP)
+    morni_until = st["morni_until"]
+    if asked:
+        morni_until = now + MORNI_MINUTES * 60
+    if speaker.lower().startswith(("морни", "мурни", "morni")):
+        morni_until = max(morni_until, now + MORNI_MINUTES * 60)
+    with_morni = now < morni_until
+    ok, _ = should_answer(text, st["last_reply_at"], st["chain"], with_morni, same)
+    if not (ok or asked):
+        return None
+    hist = st["history"] + [{"role": "user", "content": f"({who}): {text}"}]
+    return build_msgs(hist, longmem.anger(who), with_morni, who, st["present"])
+
+
+def _speak_own(instruction: str, mouth, listener, st, who: str = "", tag: str = "") -> str:
+    """Мартышка говорит сама, без вопроса: поздороваться, попрощаться, заговорить, когда тихо.
+    Она может и промолчать — ответить [МОЛЧУ]. Возвращает сказанное."""
+    from . import longmem
+    history = st["history"]
+    history.append({"role": "user", "content": instruction})
+    listener.paused.set()
+    try:
+        mouth.first_audio_at = 0.0
+        mouth.synth_stats.clear()
+        mouth.stopped.clear()
+        mouth.anger = longmem.anger(who) if who else 0
+        raw = reply_stream(history, mouth, mouth.anger, False, who=who, present=st["present"])
+        mouth.wait_yielding(listener)
+    finally:
+        mouth.stopped.clear()
+        listener.paused.clear()
+    _take_tags(raw, who)
+    answer = _clean(raw)
+    if answer:
+        history.append({"role": "assistant", "content": answer})
+        _log(config.GOVORILKA_NICK, f"{answer}   [{tag or 'сама'}]")
+        longmem.log("говорилка", config.NAME, "", answer)
+        st["last_reply_at"], st["chain"] = time.time(), 0
+    else:
+        history.pop()                                   # промолчала — подсказку из истории убираем
+        _log("система", f"{tag or 'сама'}: решила промолчать")
+    return answer
+
+
+def _take_tags(raw: str, who: str) -> None:
+    """Служебные метки ответа: факты о людях, их любимые темы, уроки."""
+    from . import longmem
+    for name, fact in ABOUT_RE.findall(raw):
+        longmem.remember_about(name, fact)
+    for name, topic in TOPIC_RE.findall(raw):
+        if longmem.add_topic(name, topic):
+            _log("система", f"запомнила: {name.strip()} любит говорить о «{topic.strip()}»")
+    try:
+        from . import growth
+        growth.take_tags(raw, "говорилка")
+    except Exception:
+        pass
+
+
+def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
     """Договорённая фраза: решить, отвечать ли, и ответить голосом. st — состояние разговора (история, цепочка…).
-    speaker — кто сказал (если известно), initiative — Мартышка сама начинает разговор с Морни."""
+    speaker — кто сказал (если известно), initiative — Мартышка сама начинает разговор с Морни,
+    pre — ответ, который начали обдумывать во время паузы (Prethink)."""
     from . import longmem
     t0 = time.time()
     history = st["history"]
@@ -1343,10 +1615,7 @@ def _respond(text, mouth, listener, st, initiative=False, speaker=""):
         st["last_reply_at"], st["chain"] = time.time(), 0
         st["morni_until"] = time.time() + MORNI_MINUTES * 60
         return
-    who = longmem.norm(speaker) if speaker else SERVER
-    # человек не назвался, но разговор продолжается — скорее всего, говорит тот же, кого узнали только что
-    if not speaker and st.get("last_who") and time.time() - st.get("last_who_at", 0) < config.GOVORILKA_FOLLOWUP + 15:
-        who = st["last_who"]
+    who = _who_of(speaker, st)
     history.append({"role": "user", "content": f"({who}): {text}"})
     if speaker.lower().startswith(("морни", "мурни", "morni")):
         st["morni_until"] = max(st["morni_until"], time.time() + MORNI_MINUTES * 60)
@@ -1374,10 +1643,18 @@ def _respond(text, mouth, listener, st, initiative=False, speaker=""):
     if asked_morni:
         ok, st["chain"] = True, 0
     anger = longmem.anger(who)
-    # злая Мартышка (злость 4–5) сама влезает в чужие разговоры с колкостью — но не чаще раза в 25 секунд
-    if CHIME_IN and not ok and anger >= 4 and len(text) > 15 and time.time() - st["last_reply_at"] > 25:
+    # САМА РЕШАЕТ, КОГДА ВМЕШАТЬСЯ: её не звали, но иногда (не чаще CHIME_EVERY) она прислушивается — и если
+    # правда есть что сказать к месту, вступает; иначе молчит ([МОЛЧУ]). Говорит только в тишине — не перебивает.
+    note = ""
+    if (not ok and getattr(config, "GOVORILKA_CHIME", True) and len(text) > 20 and not with_morni
+            and time.time() - max(st["last_reply_at"], st.get("last_chime", 0.0)) > CHIME_EVERY):
         import random
-        ok = random.random() < 0.4
+        if random.random() < CHIME_CHANCE:
+            st["last_chime"] = time.time()
+            ok, pre = True, None
+            note = ("Тебя сейчас НЕ звали — это разговор людей между собой. Вмешайся, только если правда есть "
+                    "что сказать к месту: смешная реплика, ответ на вопрос, который ты знаешь, своё мнение в споре, "
+                    "тема, которую человек любит. Коротко, по-живому. Если нечего — ответь ровно [МОЛЧУ].")
     if not ok:
         longmem.log("говорилка", who, text)
         if with_morni and st["chain"] >= config.GOVORILKA_MAX_CHAIN * 2:
@@ -1397,7 +1674,7 @@ def _respond(text, mouth, listener, st, initiative=False, speaker=""):
         if named and not with_morni:
             mouth.filler(anger)                         # «Ага» сразу, пока мозг думает
         mouth.anger = anger
-        raw = reply_stream(history, mouth, anger, with_morni, who=who, present=st["present"])
+        raw = reply_stream(history, mouth, anger, with_morni, who=who, present=st["present"], note=note, pre=pre)
         t_text = time.time() - t0
         yielded = mouth.wait_yielding(listener)         # режим диалога: перебили — замолкаем, не говорим поверх
     finally:
@@ -1421,16 +1698,12 @@ def _respond(text, mouth, listener, st, initiative=False, speaker=""):
         if new_anger != anger:
             _log("система", f"злость на «{who}»: {anger} → {new_anger}")
         anger = new_anger
-    for name, fact in ABOUT_RE.findall(raw):
-        longmem.remember_about(name, fact)
-    try:
-        from . import growth
-        growth.take_tags(raw, "говорилка")
-    except Exception:
-        pass
+    _take_tags(raw, who)
     answer = _clean(raw)
     longmem.log("говорилка", who, text, answer)
     if not answer:
+        if note:
+            _log("система", "прислушалась к разговору — решила не вмешиваться")
         return
     history.append({"role": "assistant", "content": answer})
     del history[:-60]

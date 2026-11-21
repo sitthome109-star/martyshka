@@ -635,12 +635,16 @@ async function renderGov(){ const box=$('#pg');
         ${g.cable?'':'<div class="note" style="margin:12px 0 0">Нужен виртуальный кабель <b>VB-CABLE</b>.</div>'}</div>
         <div class="field"><div class="lab"><b>Мозг в войсе</b><small>Flash отвечает быстрее, Pro — умнее.</small></div><div class="ctl"><select class="in" id="gModel"><option value="deepseek-flash">DeepSeek Flash</option><option value="deepseek-v4-pro">DeepSeek Pro</option></select></div></div>
         <div class="field"><div class="lab"><b>Озвучка в войсе</b><small>S2.1 Pro Free — бесплатно. Drama 3 — самая живая подача, но платная (кончатся кредиты — сама вернётся на бесплатную).</small></div><div class="ctl"><select class="in" id="gFish">${g.fish_models.map(([k,n])=>`<option value="${k}" ${k===g.fish_model?'selected':''}>${esc(n)}</option>`).join('')}</select></div></div>
+        <div class="field"><div class="lab"><b>Здороваться и прощаться</b><small>Кто зашёл в войс — здоровается по имени (вспоминает что-то о нём), кто ушёл — прощается.</small></div><div class="ctl"><div class="tog ${g.greet?'on':''}" id="gGreet"></div></div></div>
+        <div class="field"><div class="lab"><b>Сама решает, когда вмешаться</b><small>Иногда прислушивается к чужому разговору и вступает, если правда есть что сказать (иначе молчит); в долгой тишине может сама заговорить о том, что людям интересно. Никогда не говорит поверх.</small></div><div class="ctl"><div class="tog ${g.chime?'on':''}" id="gChime"></div></div></div>
         <div class="field"><div class="lab"><b>Режим диалога</b><small>Откликается только на имя «Мартышка», сама разговор не заводит, дослушивает собеседника до конца (2 с тишины) и не говорит поверх: заговорили во время её ответа — замолкает и слушает.</small></div><div class="ctl"><div class="tog ${g.dialog?'on':''}" id="gDialog"></div></div></div>
         <div class="field"><div class="lab"><b>Сидеть в Говорилке всегда</b><small>Заходит сама при включении ПК и возвращается, если выкинуло.</small></div><div class="ctl"><div class="tog ${g.autostart?'on':''}" id="gAuto"></div></div></div></div>
       <div class="sec"><h3>Голос в Говорилке</h3><div id="gVoice" style="padding:8px 0 14px"></div></div>
       <div class="sec"><h3>Что там говорили</h3><div class="log" id="gLog" style="margin:8px 0 14px"></div></div>`;
       $('#gModel').value=g.model; $('#gModel').onchange=async()=>toast((await api().gov_action('model',$('#gModel').value)).message);
       $('#gFish').onchange=async()=>toast((await api().gov_action('fish_model',$('#gFish').value)).message);
+      $('#gGreet').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('greet',ev.target.classList.contains('on'))).message); };
+      $('#gChime').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('chime',ev.target.classList.contains('on'))).message); };
       $('#gDialog').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('dialog',ev.target.classList.contains('on'))).message); };
       $('#gAuto').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('autostart',ev.target.classList.contains('on'))).message); };
       $('#gJoin').onclick=async()=>{ toast((await api().gov_action('join')).message); fill(); };

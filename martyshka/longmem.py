@@ -138,6 +138,25 @@ def remember_about(name: str, fact: str) -> bool:
         return True
 
 
+def add_topic(name: str, topic: str) -> bool:
+    """Любимая тема человека (о чём ему интересно говорить): игры, музыка, аниме, работа…"""
+    topic = (topic or "").strip().strip(".").lower()[:60]
+    if not topic or not (name or "").strip():
+        return False
+    with _lock:
+        p = person(name)
+        have = p.setdefault("темы", [])
+        if any(topic == t or topic in t or t in topic for t in have):
+            return False
+        p["темы"] = (have + [topic])[-15:]
+        _save_people()
+        return True
+
+
+def topics(name: str) -> list[str]:
+    return list(person(name).get("темы") or [])
+
+
 def forget_about(name: str, what: str) -> int:
     with _lock:
         p = person(name)
@@ -228,15 +247,18 @@ def _learn_people(recs: list[dict]) -> None:
     try:
         raw = deepseek.ask(
             "Лента разговоров:\n" + _feed_text(recs, 40000) +
-            "\n\nВыпиши новые устойчивые факты о людях (не о Мартышке). Ответ — JSON: "
-            '{"люди": [{"имя": "...", "факты": ["...", "..."]}]}. Хозяина зови «брат». Мелочи и разовые реплики — '
-            "не надо. Если ничего — пустой список.", model=deepseek.FLASH, max_tokens=1200, json_mode=True)
+            "\n\nВыпиши новые устойчивые факты о людях (не о Мартышке) и их любимые темы — о чём им интересно "
+            "говорить (игры, аниме, музыка, учёба, работа, спорт…, коротко, 1–3 слова). Ответ — JSON: "
+            '{"люди": [{"имя": "...", "факты": ["..."], "темы": ["..."]}]}. Хозяина зови «брат». Мелочи и разовые '
+            "реплики — не надо. Если ничего — пустой список.", model=deepseek.FLASH, max_tokens=1500, json_mode=True)
         data = json.loads(raw)
     except Exception:
         return
     for item in data.get("люди") or []:
         for fact in (item.get("факты") or [])[:6]:
             remember_about(item.get("имя") or "", fact)
+        for t in (item.get("темы") or [])[:5]:
+            add_topic(item.get("имя") or "", t)
 
 
 _bg_started = False
@@ -288,6 +310,8 @@ def context(present: list[str] | None = None, source: str = "", today_lines: int
         bits = []
         if p.get("факты"):
             bits.append("; ".join(p["факты"][-15:]))
+        if p.get("темы"):
+            bits.append("любит говорить о: " + ", ".join(p["темы"][-8:]))
         lvl = anger(n)
         if lvl:
             bits.append(f"сейчас ты на него зла: {lvl}/5")

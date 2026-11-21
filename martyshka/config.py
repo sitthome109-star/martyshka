@@ -55,6 +55,9 @@ FISH_MODEL = "s2.1-pro-free"
 VOICE_ID = ""
 # Голос в Говорилке (пусто — тот же, что у Мартышки)
 GOVORILKA_VOICE_ID = ""
+GOVORILKA_GREET = True             # здоровается с теми, кто зашёл в войс, и прощается с ушедшими
+GOVORILKA_CHIME = True             # сама решает, когда вмешаться в разговор и заговорить в тишине
+GOVORILKA_PRETHINK = True          # думает над ответом уже во время паузы (отвечает быстрее)
 GOVORILKA_FISH_MODEL = ""
 # голос под настроение: {драма}, пение и злость (от MOOD_ANGRY_FROM из 5) — Drama 3; в злости — ANGRY_VOICE_ID
 MOOD_VOICE = True

@@ -472,7 +472,9 @@ class Api:
                 "voice": config.GOVORILKA_VOICE_ID or config.VOICE_ID, "model": g.brain_model(),
                 "autostart": bool(config.GOVORILKA_AUTOSTART) and g.autostart_enabled(),
                 "nick": config.GOVORILKA_NICK, "log": g.recent_log(40), "dialog": bool(config.GOVORILKA_DIALOG),
-                "fish_model": getattr(config, "GOVORILKA_FISH_MODEL", "") or "", "fish_models": fish_models()}
+                "fish_model": getattr(config, "GOVORILKA_FISH_MODEL", "") or "", "fish_models": fish_models(),
+                "greet": bool(getattr(config, "GOVORILKA_GREET", True)),
+                "chime": bool(getattr(config, "GOVORILKA_CHIME", True))}
 
     def gov_action(self, action: str, value=None) -> dict:
         from .. import govorilka as g
@@ -490,6 +492,13 @@ class Api:
             g.save_setting("GOVORILKA_DIALOG", bool(value))
             msg = ("Режим диалога: отвечаю только по имени, дослушиваю и не говорю поверх."
                    if value else "Режим диалога выключен: могу сама заводить разговор с Морни.")
+        elif action in ("greet", "chime"):
+            key = {"greet": "GOVORILKA_GREET", "chime": "GOVORILKA_CHIME"}[action]
+            g.save_setting(key, bool(value))
+            msg = {("greet", True): "Буду здороваться с теми, кто зашёл, и прощаться с ушедшими.",
+                   ("greet", False): "Здороваться и прощаться не буду.",
+                   ("chime", True): "Сама решаю, когда вмешаться в разговор и заговорить в тишине.",
+                   ("chime", False): "Вмешиваться не буду — только когда зовут."}[(action, bool(value))]
         elif action == "fish_model":
             g.save_setting("GOVORILKA_FISH_MODEL", value or "")
             names = dict(fish_models())
