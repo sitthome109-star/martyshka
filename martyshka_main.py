@@ -107,6 +107,10 @@ HIDDEN = False  # запущены без окна (через ярлык) — �
 DONT_KNOW_RE = re.compile(r"(не знаю|не в курсе|без понятия|не уверен|нет (у меня )?(информации|данных)|"
                           r"не могу (знать|сказать|проверить)|не имею доступа|не слежу)", re.IGNORECASE)
 
+# «Стоп»: короткая фраза из слов-остановок — замолчать и ничего не отвечать
+STOP_RE = re.compile(r"^\W*((стоп|хватит|замолчи|заткнись|помолчи|тихо|остановись|прекрати|умолкни|харэ|"
+                     r"всё|достаточно|stop|shut\s+up|отмена)\W*){1,3}$", re.IGNORECASE)
+
 # Диктовка: «пиши за мной», «начни диктовку» … «хватит писать», «стоп диктовка»
 DICTATE_ON_RE = re.compile(r"(диктовк|под\s+диктовку|пиши\s+за\s+мной|печатай\s+за\s+мной|записывай\s+за\s+мной|"
                            r"пиши\s+что\s+я\s+(говорю|скажу)|diktier|dictation|dictate)", re.IGNORECASE)
@@ -420,6 +424,12 @@ def main() -> None:
             continue
 
         print(f"{CYAN}Ты:{RESET} {command}")
+        # «Мартышка, стоп / хватит / замолчи» — голос уже оборвался на имени; просто молчим, не отвечаем
+        from martyshka.govorilka import is_stop
+        if STOP_RE.match(command) or is_stop(command):
+            status("⏹ Замолчала")
+            interrupted.clear()
+            continue
         turn_log.complaint(command, "голос")
         lines = []
         if GAME_ON_RE.search(command) and not GAME_OFF_RE.search(command):

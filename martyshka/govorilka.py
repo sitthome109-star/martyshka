@@ -807,8 +807,7 @@ class Listener:
                     self.last_voice_at = time.time()
                 # пока Мартышка говорит — обычно не слушаем; в режиме диалога слушаем и тогда: если её перебили,
                 # фраза собеседника не должна потеряться (свой голос в эту петлю не попадает — сервер его не возвращает)
-                if self.paused.is_set() and not (config.GOVORILKA_DIALOG and not ECHO["heard_self"]
-                                                 and (speaking_now or heard)):
+                if self.paused.is_set() and not (not ECHO["heard_self"] and (speaking_now or heard)):
                     speech, silence, heard = [], 0.0, False
                     continue
                 if speaking_now:
@@ -930,11 +929,23 @@ class Mouth:
             except queue.Empty:
                 pass
 
+    def wait_stoppable(self, listener) -> bool:
+        """Договорить, но «Мартышка, стоп» обрывает сразу (в любом режиме) — используется и в _speak_own,
+        и в разговоре с Морни. Возвращает True, если пришлось замолчать."""
+        while self._text_q.unfinished_tasks or self._audio_q.unfinished_tasks:
+            if self.stopped.is_set():
+                return True
+            time.sleep(0.05)
+        time.sleep(0.4)
+        return self.stopped.is_set()
+
     def wait_yielding(self, listener) -> bool:
         """Договорить ответ, но в режиме диалога уступить: кто-то заговорил поверх — замолкаем.
         Возвращает True, если пришлось замолчать."""
         talk_since = None
         while self._text_q.unfinished_tasks or self._audio_q.unfinished_tasks:
+            if self.stopped.is_set():                       # сказали «стоп»
+                return True
             if config.GOVORILKA_DIALOG and not ECHO["heard_self"] and listener.hearing:
                 talk_since = talk_since or time.time()
                 if time.time() - talk_since >= YIELD_AFTER:
@@ -1151,6 +1162,58 @@ def _take_presynth(clean: str, vid: str, mdl, wait: float = 4.0):
                 return item[1]
         time.sleep(0.03)
     return None
+
+
+STOP_WORDS_RE = re.compile(r"\b(стоп|хватит|замолчи|заткнись|помолчи|тихо|остановись|прекрати|умолкни|харэ|"
+                           r"stop|shut up)\b", re.I)
+
+
+def is_stop(text: str) -> bool:
+    """«Мартышка, стоп» / «хватит» / «заткнись»: с её именем — всегда; без имени — только короткая фраза."""
+    t = (text or "").strip()
+    if not STOP_WORDS_RE.search(t):
+        return False
+    return bool(NAME_RE.search(t)) or len(re.findall(r"\w+", t)) <= 3
+
+
+class StopWatcher:
+    """Пока Мартышка говорит — слушаем, что ей говорят, и распознаём сразу: «Мартышка, стоп» — замолкает
+    на полуслове. Остальные фразы (уже распознанные) потом возвращаются в очередь — ничего не теряется."""
+
+    def __init__(self, mouth, listener):
+        self.mouth, self.listener = mouth, listener
+        self.held: list = []
+        self.hit = False
+        self._done = threading.Event()
+        self._t = threading.Thread(target=self._run, daemon=True)
+        self._t.start()
+
+    def _run(self) -> None:
+        while not self._done.is_set():
+            try:
+                item = self.listener.phrases.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if len(item) > 3:
+                text = item[3]
+            else:
+                from .ears import HALLUCINATIONS
+                text = _hear(item[0], HALLUCINATIONS)
+            if text and is_stop(text) and not self.hit:
+                self.hit = True
+                self.mouth.stop()
+                _log("система", f"«{text}» — замолчала")
+                continue                                  # саму команду «стоп» дальше не разбираем
+            if text:
+                self.held.append((item[0], item[1], item[2], text))
+
+    def finish(self) -> bool:
+        """Перестать слушать; распознанное вернуть в очередь. True — сказали «стоп»."""
+        self._done.set()
+        self._t.join(timeout=3)
+        for it in self.held:
+            self.listener.phrases.put(it)
+        return self.hit
 
 
 class Prethink:
@@ -1419,8 +1482,9 @@ def main() -> None:
                         break
                 if watch.present:
                     st["present"] = list(watch.present)
-                for chunk, c_t0, c_t1 in chunks:
-                    text = _hear(chunk, HALLUCINATIONS)
+                for item in chunks:
+                    chunk, c_t0, c_t1 = item[:3]
+                    text = item[3] if len(item) > 3 else _hear(chunk, HALLUCINATIONS)
                     if text:
                         watch.last_overlap = []
                         name = watch.who(c_t0, c_t1)
@@ -1643,14 +1707,16 @@ def _speak_own(instruction: str, mouth, listener, st, who: str = "", tag: str = 
     history = st["history"]
     history.append({"role": "user", "content": instruction})
     listener.paused.set()
+    mouth.stopped.clear()
+    sw = StopWatcher(mouth, listener)
     try:
         mouth.first_audio_at = 0.0
         mouth.synth_stats.clear()
-        mouth.stopped.clear()
         mouth.anger = longmem.anger(who) if who else 0
         raw = reply_stream(history, mouth, mouth.anger, False, who=who, present=st["present"])
         mouth.wait_yielding(listener)
     finally:
+        sw.finish()
         mouth.stopped.clear()
         listener.paused.clear()
     _take_tags(raw, who)
@@ -1691,14 +1757,18 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
     if initiative:
         history.append({"role": "user", "content": text})
         listener.paused.set()
+        sw = StopWatcher(mouth, listener)
         try:
             mouth.first_audio_at = 0.0
             mouth.synth_stats.clear()
+            mouth.stopped.clear()
             mouth.anger = longmem.anger("Морни")
             raw = reply_stream(history, mouth, mouth.anger, with_morni=True, who="Морни",
                                present=st["present"])
-            mouth.wait()
+            mouth.wait_stoppable(listener)
         finally:
+            sw.finish()
+            mouth.stopped.clear()
             listener.paused.clear()
         answer = _clean(raw)
         if answer:
@@ -1709,6 +1779,10 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
         st["morni_until"] = time.time() + MORNI_MINUTES * 60
         return
     who = _who_of(speaker, st)
+    if is_stop(text):                                   # «Мартышка, стоп» — молчим, ничего не отвечаем
+        _log("система", f"«{text}» — молчу")
+        longmem.log("говорилка", who, text)
+        return
     history.append({"role": "user", "content": f"({who}): {text}"})
     if speaker.lower().startswith(("морни", "мурни", "morni")):
         st["morni_until"] = max(st["morni_until"], time.time() + MORNI_MINUTES * 60)
@@ -1760,10 +1834,11 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
         time.sleep(0.1)
     listener.paused.set()
     yielded = False
+    mouth.stopped.clear()
+    sw = StopWatcher(mouth, listener)
     try:
         mouth.first_audio_at = 0.0
         mouth.synth_stats.clear()
-        mouth.stopped.clear()
         if named and not with_morni:
             mouth.filler(anger)                         # «Ага» сразу, пока мозг думает
         mouth.anger = anger
@@ -1771,6 +1846,8 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
         t_text = time.time() - t0
         yielded = mouth.wait_yielding(listener)         # режим диалога: перебили — замолкаем, не говорим поверх
     finally:
+        if sw.finish():
+            yielded = False                             # замолчала по «стоп» — уже записано в журнал
         mouth.stopped.clear()
         listener.paused.clear()
     if yielded:
