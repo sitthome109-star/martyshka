@@ -135,10 +135,15 @@ def start() -> str:
     if is_running():
         return "Захожу в войс — через пару секунд буду в голосовой комнате."
     RUN_FLAG.write_text("1")
-    exe = config.PROJECT_DIR / ".venv" / "Scripts" / "pythonw.exe"
+    exe = _py_exe()
     subprocess.Popen([str(exe), "-m", "martyshka.govorilka"], cwd=str(config.PROJECT_DIR),
                      creationflags=0x08000000)
     return f"Захожу в Говорилку как «{config.GOVORILKA_NICK}» и сразу в войс — через 30–60 секунд буду."
+
+
+def _py_exe():
+    from .system import PYTHONW          # движок «Мартышка.exe» (иконка и имя в диспетчере), иначе pythonw
+    return PYTHONW
 
 
 def stop() -> str:
@@ -252,7 +257,7 @@ def set_autostart(on: bool) -> bool:
         return True
     ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:L);$s.TargetPath=$env:T;$s.Arguments=$env:A;"
           "$s.WorkingDirectory=$env:D;$s.Description='Мартышка заходит в Говорилку';$s.Save()")
-    env = dict(os.environ, L=str(lnk), T=str(config.PROJECT_DIR / ".venv" / "Scripts" / "pythonw.exe"),
+    env = dict(os.environ, L=str(lnk), T=str(_py_exe()),
                A="-m martyshka.govorilka --autostart", D=str(config.PROJECT_DIR))
     r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], env=env, capture_output=True,
                        creationflags=0x08000000)

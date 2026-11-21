@@ -1156,7 +1156,7 @@ def list_windows(with_dark: bool = True) -> list[dict]:
         if exe in ("textinputhost", "applicationframehost", "shellexperiencehost", "searchhost", "startmenuexperiencehost",
                    "explorer") and not title.value:
             return True
-        if title.value in ("Program Manager",) or exe in ("pythonw", "textinputhost", "nvidia overlay",
+        if title.value in ("Program Manager",) or exe in ("pythonw", "мартышка", "textinputhost", "nvidia overlay",
                                                           "shellexperiencehost", "searchhost"):
             return True
         # внутренняя часть окна (без шапки с заголовком) — по ней судим, тёмное ли окно

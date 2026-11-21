@@ -103,7 +103,7 @@ class Api:
     def restart(self) -> None:
         """Перезапуск окна (после того как агент поменял его самого)."""
         import subprocess
-        exe = config.PROJECT_DIR / ".venv" / "Scripts" / "pythonw.exe"
+        from ..system import PYTHONW as exe          # движок «Мартышка.exe», если собран
         subprocess.Popen(["cmd", "/c", f'timeout /t 3 /nobreak >nul & start "" "{exe}" "{config.PROJECT_DIR / "studio.py"}"'],
                          cwd=str(config.PROJECT_DIR), creationflags=0x08000000 | 0x00000008)
         self.quit()

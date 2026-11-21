@@ -15,7 +15,9 @@ from . import config
 LOG_FILE = config.DATA_DIR / "журнал.txt"
 ICON_FILE = config.PROJECT_DIR / "martyshka.ico"
 MAIN_SCRIPT = config.PROJECT_DIR / "martyshka_main.py"
-PYTHONW = config.PROJECT_DIR / ".venv" / "Scripts" / "pythonw.exe"
+_HOST = config.PROJECT_DIR / ".venv" / "Scripts" / "Мартышка.exe"   # pythonw с иконкой и именем «Мартышка» (studio/build_exe.py)
+PYTHONW = _HOST if _HOST.exists() else config.PROJECT_DIR / ".venv" / "Scripts" / "pythonw.exe"
+PY_NAMES = ("python.exe", "pythonw.exe", "мартышка.exe")
 SHORTCUT_NAME = "Мартышка.lnk"
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
@@ -88,7 +90,7 @@ def restart_self() -> None:
     """Перезапустить Мартышку (после смены настроек): новая копия подождёт, пока эта закроется."""
     args = [a for a in sys.argv[1:] if a not in ("--autostart", "--restart")]
     exe = sys.executable
-    flags = 0x00000008 if Path(exe).name.lower() == "pythonw.exe" else 0x00000010   # DETACHED / NEW_CONSOLE
+    flags = 0x00000008 if Path(exe).name.lower() in ("pythonw.exe", "мартышка.exe") else 0x00000010   # DETACHED / NEW_CONSOLE
     subprocess.Popen([exe, str(MAIN_SCRIPT), "--restart", *args], cwd=str(config.PROJECT_DIR), creationflags=flags)
     os._exit(0)
 
@@ -121,7 +123,7 @@ def voice_pids() -> list[int]:
             info = pr.info
         except Exception:
             continue
-        if (info.get("name") or "").lower() not in ("python.exe", "pythonw.exe"):
+        if (info.get("name") or "").lower() not in PY_NAMES:
             continue
         cmd = " ".join(info.get("cmdline") or [])
         if "martyshka_main.py" in cmd.replace("\\", "/") and str(pr.pid) != str(os.getpid()):
