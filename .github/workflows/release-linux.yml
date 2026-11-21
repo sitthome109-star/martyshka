@@ -1,0 +1,45 @@
+name: Build Linux Release Binary
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'martyshka-rs/**'
+      - '.github/workflows/release-linux.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust musl target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl-tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build static Linux x86_64 binary
+        working-directory: martyshka-rs
+        run: cargo build --release --target x86_64-unknown-linux-musl
+
+      - name: Prepare artifact
+        run: |
+          cp martyshka-rs/target/x86_64-unknown-linux-musl/release/martyshka martyshka-linux-x86_64
+          chmod +x martyshka-linux-x86_64
+          ls -lh martyshka-linux-x86_64
+
+      - name: Publish to GitHub Releases (latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Martyshka Linux 24/7 (latest)
+          make_latest: true
+          files: martyshka-linux-x86_64
