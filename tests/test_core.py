@@ -449,8 +449,11 @@ class TestNewStudioAndTelegramFeatures(unittest.TestCase):
             m = FakeMouth()
             raw = g.reply_stream(history, m, 2, who="Вася")
             spoken = sum(g._spoken_len(s) for s in m.said)
-            self.assertLessEqual(spoken, g.SHORT_MAX_CHARS)             # монолог обрезан
-            self.assertGreater(spoken, 50)
+            self.assertGreater(spoken, 1000)                            # лимита нет — говорит всё
+            with mock.patch.object(g, "SHORT_MAX_CHARS", 420):          # а если лимит задать — режет
+                m_cut = FakeMouth()
+                g.reply_stream(history, m_cut, 2, who="Вася")
+                self.assertLessEqual(sum(g._spoken_len(s) for s in m_cut.said), 420)
             self.assertNotIn("сэр", " ".join(m.said).lower())
             self.assertFalse(m.said[0].startswith("{"))                 # та же подача, что в прошлый раз, — снята
             self.assertIn("[ТОН: 2]", raw)                              # метки не потерялись
