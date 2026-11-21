@@ -55,8 +55,8 @@ STICKY_DIALOG = True      # режим диалога: назвали по им�
                           # пока не истекло config.GOVORILKA_FOLLOWUP и не исчерпана цепочка ответов
 CHIME_IN = False          # злая Мартышка сама влезает в чужие разговоры (по просьбе брата выключено)
 SPEECH_GAP = 0.9          # с: пауза в речи, после которой кусок считаем законченным (нарезка на фразы)
-QUIET_SENTENCE = 5.0      # с: столько тишины после ЗАКОНЧЕННОЙ фразы — и только тогда отвечаем (брат: 5 с)
-QUIET_UNFINISHED = 7.0    # с: столько тишины после оборванной фразы (ждём, что человек ещё договорит)
+QUIET_SENTENCE = 2.0      # с: столько тишины после ЗАКОНЧЕННОЙ фразы — и только тогда отвечаем (брат: 2 с)
+QUIET_UNFINISHED = 3.5    # с: столько тишины после оборванной фразы (ждём, что человек ещё договорит)
 QUIET_FORGET = 20.0       # с: фраза так и не к нам — забываем, чтобы не приклеилась к следующей
 
 
@@ -139,6 +139,7 @@ def stop() -> str:
     return "Выхожу с войса (на сервере остаюсь)." if is_running() else "Меня и так нет в войсе."
 
 
+MORNI_NOW_FLAG = BOT_DIR / "начать_с_морни.flag"   # кнопка в окне: «начни разговор с Морни сейчас»
 LEFT_FLAG = BOT_DIR / "ушла.txt"                 # брат сам сказал «уйди с сервера совсем» — сторож не возвращает
 
 
@@ -170,9 +171,14 @@ def _reload_settings() -> None:
     except Exception:
         return
     for k in ("GOVORILKA_VOICE_ID", "VOICE_ID", "GOVORILKA_MODEL", "GOVORILKA_FOLLOWUP", "GOVORILKA_MAX_CHAIN",
-              "BRAIN_MODE", "DEEPSEEK_KEY", "FISH_KEY", "FISH_MODEL", "GOVORILKA_DIALOG"):
+              "BRAIN_MODE", "DEEPSEEK_KEY", "FISH_KEY", "FISH_MODEL", "GOVORILKA_DIALOG", "GOVORILKA_FISH_MODEL"):
         if k in saved:
             setattr(config, k, saved[k])
+
+
+def fish_model() -> str:
+    """Модель озвучки в Говорилке: своя (настройка на странице Говорилки) или как у голоса."""
+    return (getattr(config, "GOVORILKA_FISH_MODEL", "") or getattr(config, "FISH_MODEL", "") or "s2.1-pro-free").strip()
 
 
 def brain_model() -> str:
@@ -468,6 +474,156 @@ def _find_leave_button(img):
     return int(np.median(xs)), int(np.median(ys))
 
 
+# ---------- КТО ГОВОРИТ: подсветка в своём окне Говорилки ----------
+# У говорящего в списке голосовой комнаты имя становится фиолетовым (и кольцо вокруг аватарки).
+# Несколько раз в секунду смотрим на своё окно, имена читаем встроенным OCR Windows (без интернета)
+# только когда состав комнаты поменялся. По времени фразы понимаем, чья она.
+OCR_SCRIPT = config.PROJECT_DIR / "tools" / "ocr.ps1"
+
+
+def _voice_rows(img) -> tuple[list[tuple[int, bool]], int]:
+    """Строки списка голосовой комнаты (левая колонка): [(y центра строки, говорит ли)], верх списка."""
+    a = np.asarray(img).astype(int)
+    H = a.shape[0]
+    leave = _find_leave_button(img)
+    if leave is None:                                    # не в голосе — списка нет
+        return [], 0
+    top, bottom = leave[1] + 60, H - 62                  # ниже «Саундпада», выше своей карточки внизу
+    names = a[top:bottom, 48:225]
+    txt = names.max(axis=2) > 100
+    ys = np.where(txt.sum(axis=1) > 0)[0]
+    rows, start = [], None
+    for i in range(len(ys) + 1):
+        if i == len(ys) or (start is not None and ys[i] - ys[i - 1] > 2):
+            if start is not None:
+                y0, y1 = start + top, ys[i - 1] + top
+                if 6 <= y1 - y0 <= 22:
+                    yc = (y0 + y1) // 2
+                    avatar = a[max(0, yc - 12):yc + 12, 14:40]
+                    if (avatar.max(axis=2) > 60).sum() >= 150:          # слева есть аватарка — это участник
+                        nm = a[y0:y1 + 1, 48:225]
+                        r, g, b = nm[..., 0], nm[..., 1], nm[..., 2]
+                        purple = int(((b > 130) & (r > 100) & (g < 90)).sum())
+                        rows.append((yc, purple >= 40))
+            start = ys[i] if i < len(ys) else None
+        elif start is None:
+            start = ys[i]
+    return rows, top
+
+
+def _ocr_names(img, rows: list[tuple[int, bool]], top: int) -> dict[int, str]:
+    """Прочитать имена строк: {y: имя}. Русский и английский OCR — берём подходящий вариант."""
+    import tempfile
+    from PIL import Image
+    if not rows:
+        return {}
+    bottom = rows[-1][0] + 20
+    crop = np.asarray(img.crop((44, top, 235, bottom))).astype(int).max(axis=2)
+    g = Image.fromarray((255 - np.clip((crop - 18) * 255 // 212, 0, 255)).astype("uint8"))
+    g = g.resize((g.width * 3, g.height * 3), Image.LANCZOS)
+    path = Path(tempfile.gettempdir()) / "martyshka_govorilka_names.png"
+    g.save(path)
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(OCR_SCRIPT),
+                              str(path)], capture_output=True, timeout=30, creationflags=0x08000000).stdout
+    except Exception:
+        return {}
+    found: dict[str, list[tuple[int, str]]] = {}
+    for line in out.decode("utf-8", "replace").splitlines():
+        parts = line.strip().split("|", 3)
+        if len(parts) == 4 and parts[1].lstrip("-").isdigit():
+            found.setdefault(parts[0], []).append((int(parts[1]) // 3 + top, parts[3].strip()))
+    res = {}
+    for y, _ in rows:
+        def near(lang):
+            c = [t for yy, t in found.get(lang, []) if abs(yy - y) <= 10]
+            return c[0] if c else ""
+        ru, en = near("ru"), near("en-US")
+        name = ru if re.search(r"[а-яё]", ru, re.I) else (en or ru)
+        if name:
+            res[y] = _known_name(name)
+    return res
+
+
+def _known_name(name: str) -> str:
+    """OCR может ошибиться в букве — если имя очень похоже на уже знакомого человека, берём его."""
+    import difflib
+    from . import longmem
+    try:
+        known = list(longmem.people().keys())
+    except Exception:
+        known = []
+    m = difflib.get_close_matches(name, known, n=1, cutoff=0.85)
+    return m[0] if m else name
+
+
+class SpeakerWatch:
+    """Следит за подсветкой говорящих в своём окне Говорилки. who(t0, t1) — кто говорил в это время."""
+
+    def __init__(self, get_pid):
+        self.get_pid = get_pid
+        self.timeline: collections.deque = collections.deque(maxlen=3000)   # (время, {имена говорящих})
+        self.present: list[str] = []                                         # кто в голосовой комнате
+        self._sig, self._names = None, {}
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    @staticmethod
+    def _me(name: str) -> bool:
+        n = name.lower()
+        return n.startswith("мартышк") or n == config.GOVORILKA_NICK.lower()
+
+    def _loop(self) -> None:
+        h, h_pid = None, 0
+        while True:
+            try:
+                pid = self.get_pid()
+                if pid != h_pid or not h or not ctypes_iswindow(h):
+                    h, h_pid = _main_window(pid), pid
+                if not h:
+                    time.sleep(2)
+                    continue
+                img = _snapshot(h)
+                rows, top = _voice_rows(img)
+                if not rows:
+                    self.present = []
+                    time.sleep(1.0)
+                    continue
+                a = np.asarray(img)
+                # состав комнаты: положение строк + грубый «отпечаток» аватарок; поменялся — читаем имена заново
+                sig = tuple((y // 4, tuple((a[y - 8:y + 8, 19:35].reshape(-1, 3).mean(axis=0) // 40).astype(int)))
+                            for y, _ in rows)
+                if sig != self._sig:
+                    names = _ocr_names(img, rows, top)
+                    if len(names) == len(rows):
+                        self._sig, self._names = sig, names
+                        self.present = [n for n in names.values() if not self._me(n)]
+                        _log("система", "в войсе: " + ", ".join(names.values()))
+                if self._sig == sig:
+                    talking = {self._names[y] for y, on in rows if on and y in self._names}
+                    self.timeline.append((time.time(), {n for n in talking if not self._me(n)}))
+            except Exception as e:
+                _log("ошибка", f"кто говорит: {type(e).__name__}: {e}")
+                time.sleep(3)
+            time.sleep(0.15)
+
+    def who(self, t0: float, t1: float) -> str:
+        """Кто больше всех светился, пока звучала фраза (t0…t1). Пусто — не поняли."""
+        votes: dict[str, int] = {}
+        for t, names in list(self.timeline):
+            if t0 - 0.4 <= t <= t1 + 0.3:
+                for n in names:
+                    votes[n] = votes.get(n, 0) + 1
+        if not votes:
+            return ""
+        best = max(votes, key=votes.get)
+        return best if votes[best] >= 2 else ""
+
+
+def ctypes_iswindow(h) -> bool:
+    import ctypes
+    return bool(ctypes.windll.user32.IsWindow(h))
+
+
 PARK_X = -4000     # окно Мартышки живёт за краем экрана: работает и рисуется, но не мешает
 
 
@@ -606,7 +762,8 @@ class Listener:
                     if silence >= SPEECH_GAP or len(speech) * BLOCK / SR > 25:
                         audio = np.concatenate(speech)
                         if len(audio) / SR > 0.6:
-                            self.phrases.put(audio)
+                            now = time.time()       # когда звучала фраза — по этому времени узнаём, кто говорил
+                            self.phrases.put((audio, now - len(audio) / SR, now - silence))
                         speech, silence, heard = [], 0.0, False
 
 
@@ -646,7 +803,7 @@ class Mouth:
                 if self.stopped.is_set():
                     continue
                 t0 = time.time()
-                audio = self.fish.speak_all(text, voice_id(), temperature=0.75)
+                audio = self.fish.speak_all(text, voice_id(), temperature=0.75, model=fish_model())
                 if len(audio) and not self.stopped.is_set():
                     self.synth_stats.append((len(audio) / self.sr, time.time() - t0))
                     self._audio_q.put(audio)
@@ -717,7 +874,7 @@ class Mouth:
             fillers[lvl] = []
             for w in words:
                 try:
-                    a = self.fish.speak_all(w, self._filler_voice)
+                    a = self.fish.speak_all(w, self._filler_voice, model=fish_model())
                     if len(a):
                         fillers[lvl].append(a)
                 except Exception:
@@ -946,6 +1103,8 @@ def main() -> None:
     pending, pending_at = "", 0.0                         # недоговорённая фраза
     started_at, last_initiative, next_initiative_quiet = time.time(), time.time(), 90.0
     relaunches = 0
+    pending_who = ""                                      # кто сказал недоговорённую фразу (по подсветке в окне)
+    watch = SpeakerWatch(lambda: client.pid)
 
     def save_state():
         STATE_FILE.write_text(json.dumps({"pid": os.getpid(), "client": client.pid, "in_voice": voice_state}),
@@ -1013,11 +1172,30 @@ def main() -> None:
                         chunks.append(listener.phrases.get_nowait())
                     except queue.Empty:
                         break
-                for chunk in chunks:
+                if watch.present:
+                    st["present"] = list(watch.present)
+                for chunk, c_t0, c_t1 in chunks:
                     text = _hear(chunk, HALLUCINATIONS)
                     if text:
+                        name = watch.who(c_t0, c_t1)
+                        if name:
+                            _log("это сказал(а)", name)
+                        # заговорил другой человек — прошлая фраза была не его: разбираем её отдельно
+                        if pending and name and pending_who and name != pending_who:
+                            _respond(pending, mouth, listener, st, speaker=pending_who)
+                            pending = ""
                         pending = f"{pending} {text}".strip()
                         pending_at = time.time()
+                        pending_who = name or pending_who
+                # кнопка в окне: брат велел начать разговор с Морни прямо сейчас (в любом режиме)
+                if MORNI_NOW_FLAG.exists() and not listener.hearing:
+                    MORNI_NOW_FLAG.unlink(missing_ok=True)
+                    last_initiative = time.time()
+                    _log("система", "брат попросил начать разговор с Морни")
+                    _respond("(брат попросил: заведи разговор с Морни прямо сейчас — обратись к ней, задай колкий "
+                             "или интересный вопрос, можешь вспомнить что-то из прошлых разговоров)",
+                             mouth, listener, st, initiative=True)
+                    continue
                 # сама заводит разговор с Морни, когда в войсе давно тихо (не чаще раза в MORNI_START_EVERY)
                 quiet_for = time.time() - max(listener.last_voice_at, st["last_reply_at"], started_at)
                 if (not config.GOVORILKA_DIALOG and not pending and not listener.hearing
@@ -1036,7 +1214,8 @@ def main() -> None:
                     quiet = time.time() - max(pending_at, listener.last_voice_at)
                     if quiet >= (QUIET_SENTENCE if sentence_finished(pending) else QUIET_UNFINISHED):
                         text, pending = pending, ""
-                        _respond(text, mouth, listener, st)
+                        _respond(text, mouth, listener, st, speaker=pending_who)
+                        pending_who = ""
                     elif quiet >= QUIET_FORGET:
                         # фраза так и не к нам (не назвали по имени) — забываем, чтобы не приклеилась к следующей
                         _log("мимо", pending)
@@ -1124,7 +1303,7 @@ def _respond(text, mouth, listener, st, initiative=False, speaker=""):
         st["last_reply_at"], st["chain"] = time.time(), 0
         st["morni_until"] = time.time() + MORNI_MINUTES * 60
         return
-    who = speaker or SERVER
+    who = longmem.norm(speaker) if speaker else SERVER
     # человек не назвался, но разговор продолжается — скорее всего, говорит тот же, кого узнали только что
     if not speaker and st.get("last_who") and time.time() - st.get("last_who_at", 0) < config.GOVORILKA_FOLLOWUP + 15:
         who = st["last_who"]
@@ -1179,7 +1358,7 @@ def _respond(text, mouth, listener, st, initiative=False, speaker=""):
     if yielded:
         _log("система", "замолчала — собеседник заговорил, слушаю его")
     # служебные метки: злость, кто говорил, факты о людях
-    m = WHO_RE.search(raw)
+    m = None if speaker else WHO_RE.search(raw)       # имя с экрана точнее догадки мозга
     if m and m.group(1).strip().lower() not in ("кто-то", "неизвестно", "?"):
         real = m.group(1).strip()
         history[-1]["content"] = f"({real}): {text}"

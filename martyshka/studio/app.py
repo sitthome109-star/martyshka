@@ -412,7 +412,7 @@ class Api:
         except Exception:
             return []
 
-    def preview_voice(self, voice_id: str, lang: str = "ru") -> dict:
+    def preview_voice(self, voice_id: str, lang: str = "ru", model: str = "") -> dict:
         """Послушать голос: короткая фраза на его языке через колонки."""
         from .. import fish
         phrase = {"ru": "{laughing} Привет! Я Мартышка. Как тебе мой голос?",
@@ -424,7 +424,7 @@ class Api:
         try:
             import sounddevice as sd
             from ..voice import prepare_text
-            audio = fish.speak_all(prepare_text(phrase), voice_id)
+            audio = fish.speak_all(prepare_text(phrase), voice_id, model=model or None)
             sd.play(audio * float(config.VOICE_VOLUME), fish.SAMPLE_RATE)
             sd.wait()
             return {"ok": True}
@@ -471,7 +471,8 @@ class Api:
         return {"status": g.status(), "running": g.is_running(), "cable": g.cable_ready(),
                 "voice": config.GOVORILKA_VOICE_ID or config.VOICE_ID, "model": g.brain_model(),
                 "autostart": bool(config.GOVORILKA_AUTOSTART) and g.autostart_enabled(),
-                "nick": config.GOVORILKA_NICK, "log": g.recent_log(40), "dialog": bool(config.GOVORILKA_DIALOG)}
+                "nick": config.GOVORILKA_NICK, "log": g.recent_log(40), "dialog": bool(config.GOVORILKA_DIALOG),
+                "fish_model": getattr(config, "GOVORILKA_FISH_MODEL", "") or "", "fish_models": fish_models()}
 
     def gov_action(self, action: str, value=None) -> dict:
         from .. import govorilka as g
@@ -489,10 +490,26 @@ class Api:
             g.save_setting("GOVORILKA_DIALOG", bool(value))
             msg = ("Режим диалога: отвечаю только по имени, дослушиваю и не говорю поверх."
                    if value else "Режим диалога выключен: могу сама заводить разговор с Морни.")
+        elif action == "fish_model":
+            g.save_setting("GOVORILKA_FISH_MODEL", value or "")
+            names = dict(fish_models())
+            msg = "Озвучка в Говорилке: " + names.get(value or "", "как у голоса Мартышки")
+        elif action == "morni":
+            if not g.is_running():
+                msg = "Мартышки нет в Говорилке — сначала нажми «Зайти в войс»."
+            else:
+                g.BOT_DIR.mkdir(parents=True, exist_ok=True)
+                g.MORNI_NOW_FLAG.write_text("1")
+                msg = "Сейчас заговорит с Морни."
         elif action == "autostart":
             g.set_autostart(bool(value))
             msg = "Буду сидеть в Говорилке всегда." if value else "Сама заходить не буду."
         return dict(self.gov_info(), message=msg)
+
+
+def fish_models() -> list:
+    from .. import fish
+    return [("", "Как у голоса Мартышки")] + [(k, v.split(" — ")[0]) for k, v in fish.MODELS]
 
 
 def setup_helpers() -> None:

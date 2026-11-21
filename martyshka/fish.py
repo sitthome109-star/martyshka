@@ -44,12 +44,22 @@ OFFICIAL = [
     ("79d0bd3e4e5444b18f7b6d89b5927bf1", "Jordan", "en", "male"), ("933563129e564b19a115bedd57b7406a", "Sarah", "en", "female"),
     ("b347db033a6549378b48d00acb0d06cd", "Selene", "en", "female"), ("9a9cf47702da476aa4629e2506d4a857", "Hannah", "en", "female"),
     ("e3cd384158934cc9a01029cd7d278634", "Laura", "en", "female"), ("f3a2b90078d54a65af4b95f63bc7798e", "Sheila", "en", "female"),
+    ("c70cfb98867a4bfb9ae20d2401257b92", "Delia", "en", "female"),
 ]
 DEFAULT_VOICE = "b871e425b6c0442baa5cf73f6c336bbe"   # Артём
+
+# Модели озвучки (переключаются в настройках голоса и Говорилки отдельно)
+FREE, DRAMA = "s2.1-pro-free", "drama-3"
+MODELS = [(FREE, "S2.1 Pro Free — бесплатно"), ("s2.1-pro", "S2.1 Pro — 15 $ за 1 млн байт"),
+          (DRAMA, "Drama 3 — самая живая подача (платно: 10 $ за 1 млн байт до 30.11.2026, потом 50 $)")]
+# Голоса, на которых Fish показывает Drama 3 (с ней звучат лучше всего); работают и все остальные голоса
+DRAMA_PICKS = {"bf322df2096a46f18c579d0baa36f41d", "c70cfb98867a4bfb9ae20d2401257b92",
+               "f3a2b90078d54a65af4b95f63bc7798e", "536d3a5e000945adb7038665781a4aca"}
 
 _client: httpx.Client | None = None
 _lock = threading.Lock()
 _free_failed = False
+_drama_off_until = 0.0          # на Drama кончились кредиты — какое-то время говорим бесплатной моделью
 
 
 class FishError(RuntimeError):
@@ -78,9 +88,12 @@ def _headers(model: str | None = None) -> dict:
     return h
 
 
-def tts_model() -> str:
-    m = (getattr(config, "FISH_MODEL", "") or "s2.1-pro-free").strip()
-    return "s2.1-pro" if (m == "s2.1-pro-free" and _free_failed) else m
+def tts_model(model: str | None = None) -> str:
+    """Какой моделью озвучивать. model — своя модель (например, у Говорилки), иначе из настроек голоса."""
+    m = (model or getattr(config, "FISH_MODEL", "") or FREE).strip()
+    if m == DRAMA and time.time() < _drama_off_until:
+        m = FREE
+    return "s2.1-pro" if (m == FREE and _free_failed) else m
 
 
 def _explain(status: int, body: str) -> str:
@@ -94,9 +107,11 @@ def _explain(status: int, body: str) -> str:
 
 
 def speak(text: str, voice_id: str | None = None, speed: float | None = None, temperature: float | None = None,
-          latency: str = "balanced", sample_rate: int = SAMPLE_RATE, should_stop=None) -> Iterator[np.ndarray]:
-    """Озвучить текст. Звук приходит кусочками (float32, моно, 24 кГц) — можно играть сразу."""
-    global _free_failed
+          latency: str = "balanced", sample_rate: int = SAMPLE_RATE, should_stop=None,
+          model: str | None = None) -> Iterator[np.ndarray]:
+    """Озвучить текст. Звук приходит кусочками (float32, моно, 24 кГц) — можно играть сразу.
+    model — модель озвучки (s2.1-pro-free / s2.1-pro / drama-3); не задана — из настроек голоса."""
+    global _free_failed, _drama_off_until
     body = {"text": text, "reference_id": voice_id or getattr(config, "VOICE_ID", "") or DEFAULT_VOICE,
             "format": "pcm", "sample_rate": sample_rate, "latency": latency, "normalize": True,
             # выразительность и темп настроек больше не имеют — подачу Мартышка задаёт сама метками в тексте
@@ -104,13 +119,17 @@ def speak(text: str, voice_id: str | None = None, speed: float | None = None, te
             "top_p": 0.8, "chunk_length": 200,
             "prosody": {"speed": float(speed if speed is not None else 1.0), "volume": 0, "normalize_loudness": True}}
     for attempt in range(3):
-        model = tts_model()
+        use = tts_model(model)
         try:
-            with http().stream("POST", API + "/v1/tts", headers=_headers(model), json=body) as r:
+            with http().stream("POST", API + "/v1/tts", headers=_headers(use), json=body) as r:
                 if r.status_code != 200:
                     err = r.read().decode("utf-8", "replace")
+                    # на Drama кончились кредиты — 30 минут говорим бесплатной моделью, чтобы не замолчать
+                    if use == DRAMA and r.status_code in (402, 403):
+                        _drama_off_until = time.time() + 30 * 60
+                        continue
                     # бесплатная модель закончилась (после 30.11.2026) — дальше платная, тот же голос
-                    if model == "s2.1-pro-free" and r.status_code in (400, 403, 404, 410, 422):
+                    if use == FREE and r.status_code in (400, 403, 404, 410, 422):
                         _free_failed = True
                         continue
                     if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
@@ -182,13 +201,18 @@ def refresh_catalog(per_lang: int = 150) -> list[dict]:
 
 
 def catalog() -> list[dict]:
+    v = []
     try:
         v = json.loads(CATALOG_FILE.read_text(encoding="utf-8"))
-        if v:
-            return v
     except Exception:
         pass
-    return _official()
+    if not v:
+        v = _official()
+    ids = {x["id"] for x in v}
+    v += [o for o in _official() if o["id"] not in ids]        # новые официальные (например, Delia)
+    for x in v:
+        x["drama"] = x["id"] in DRAMA_PICKS
+    return v
 
 
 def search(query: str, limit: int = 40) -> list[dict]:

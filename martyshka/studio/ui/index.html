@@ -608,17 +608,17 @@ async function voicePicker(c,f){
   const wrap=document.createElement('div'); wrap.innerHTML=`<div class="vfilter"></div><div style="display:flex;gap:8px;margin:0 0 10px"><input class="in" placeholder="Найти голос по названию…"><button class="btn">Искать во всей библиотеке</button></div><div class="vlist"><div style="color:var(--muted)">Загружаю голоса…</div></div>`;
   c.appendChild(wrap);
   let all=await api().voices(), flt='all', q='', cur=f.value||'';
-  const F=[['all','Все'],['off','⭐ Официальные'],['ru','Русские'],['uk','Украинские'],['de','Немецкие'],['en','Английские'],['female','Женские'],['male','Мужские']];
+  const F=[['all','Все'],['drama','🎭 Для Drama 3'],['off','⭐ Официальные'],['ru','Русские'],['uk','Украинские'],['de','Немецкие'],['en','Английские'],['female','Женские'],['male','Мужские']];
   const fb=wrap.querySelector('.vfilter');
   F.forEach(([k,n])=>{ const b=document.createElement('button'); b.textContent=n; b.className=k===flt?'on':''; b.onclick=()=>{ flt=k; fb.querySelectorAll('button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); draw(); }; fb.appendChild(b); });
   const inp=wrap.querySelector('input'); inp.oninput=()=>{ q=inp.value.trim().toLowerCase(); draw(); };
   wrap.querySelector('.btn').onclick=async()=>{ if(!q){ toast('Напиши название'); return; } toast('Ищу во всей библиотеке Fish…'); const r=await api().search_voices(q); const ids=new Set(all.map(v=>v.id)); r.forEach(v=>{ if(!ids.has(v.id)) all.push(v); }); draw(); };
   const L={ru:'RU',uk:'UK',de:'DE',en:'EN'};
   function draw(){ const list=wrap.querySelector('.vlist'); list.innerHTML='';
-    const vs=all.filter(v=>(flt==='all'||(flt==='off'&&v.official)||v.lang===flt||v.gender===flt) && (!q||v.title.toLowerCase().includes(q)||(v.desc||'').toLowerCase().includes(q))).slice(0,300);
+    const vs=all.filter(v=>(flt==='all'||(flt==='drama'&&v.drama)||(flt==='off'&&v.official)||v.lang===flt||v.gender===flt) && (!q||v.title.toLowerCase().includes(q)||(v.desc||'').toLowerCase().includes(q))).slice(0,300);
     if(!vs.length){ list.innerHTML='<div style="color:var(--muted)">Ничего не нашла.</div>'; return; }
     vs.forEach(v=>{ const r=document.createElement('div'); r.className='v'+(v.id===cur?' sel':'');
-      r.innerHTML=`<button class="play" title="Послушать">${IC.play}</button><div class="vn"><b></b><small></small></div><span class="pill">${L[v.lang]||v.lang||'?'}</span>${v.official?'<span class="pill ok">официальный</span>':''}<button class="btn" style="height:30px">${v.id===cur?'Выбран ✓':'Выбрать'}</button>`;
+      r.innerHTML=`<button class="play" title="Послушать">${IC.play}</button><div class="vn"><b></b><small></small></div><span class="pill">${L[v.lang]||v.lang||'?'}</span>${v.drama?'<span class="pill">🎭 Drama</span>':''}${v.official?'<span class="pill ok">официальный</span>':''}<button class="btn" style="height:30px">${v.id===cur?'Выбран ✓':'Выбрать'}</button>`;
       r.querySelector('b').textContent=v.title; r.querySelector('small').textContent=(v.gender==='female'?'женский · ':v.gender==='male'?'мужской · ':'')+(v.popular?Math.round(v.popular/1000)+'k использований · ':'')+(v.desc||'');
       r.querySelector('.play').onclick=async ev=>{ const p=ev.currentTarget; p.classList.add('busy'); const res=await api().preview_voice(v.id,v.lang); p.classList.remove('busy'); if(res&&res.error) toast(res.error); };
       r.querySelector('.btn').onclick=()=>{ cur=v.id; if(f.instant){ api().save_settings({[f.key]:v.id}); toast('Голос: '+v.title); } else { mark(f.key,v.id); toast('Нажми «Сохранить» внизу'); } draw(); };
@@ -630,17 +630,20 @@ async function renderGov(){ const box=$('#pg');
   const fill=async first=>{ const g=await api().gov_info();
     if(first){ box.innerHTML=`<h2>Говорилка</h2><p class="pd">Мартышка сидит на голосовом сервере отдельным участником «${esc(g.nick)}».</p>
       <div class="sec"><div class="card" style="margin:12px 0"><h4>Статус <span class="pill" id="gst"></span></h4><small id="gstatus" style="color:var(--muted)"></small>
-        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn pri" id="gJoin">Зайти в войс</button><button class="btn" id="gLeave">Выйти с войса</button><button class="btn red" id="gQuit">Уйти с сервера совсем</button></div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn pri" id="gJoin">Зайти в войс</button><button class="btn" id="gLeave">Выйти с войса</button><button class="btn" id="gMorni">Начать диалог с Морни</button><button class="btn red" id="gQuit">Уйти с сервера совсем</button></div>
         ${g.cable?'':'<div class="note" style="margin:12px 0 0">Нужен виртуальный кабель <b>VB-CABLE</b>.</div>'}</div>
         <div class="field"><div class="lab"><b>Мозг в войсе</b><small>Flash отвечает быстрее, Pro — умнее.</small></div><div class="ctl"><select class="in" id="gModel"><option value="deepseek-flash">DeepSeek Flash</option><option value="deepseek-v4-pro">DeepSeek Pro</option></select></div></div>
-        <div class="field"><div class="lab"><b>Режим диалога</b><small>Откликается только на имя «Мартышка», сама разговор не заводит, дослушивает собеседника до конца (5 с тишины) и не говорит поверх: заговорили во время её ответа — замолкает и слушает.</small></div><div class="ctl"><div class="tog ${g.dialog?'on':''}" id="gDialog"></div></div></div>
+        <div class="field"><div class="lab"><b>Озвучка в войсе</b><small>S2.1 Pro Free — бесплатно. Drama 3 — самая живая подача, но платная (кончатся кредиты — сама вернётся на бесплатную).</small></div><div class="ctl"><select class="in" id="gFish">${g.fish_models.map(([k,n])=>`<option value="${k}" ${k===g.fish_model?'selected':''}>${esc(n)}</option>`).join('')}</select></div></div>
+        <div class="field"><div class="lab"><b>Режим диалога</b><small>Откликается только на имя «Мартышка», сама разговор не заводит, дослушивает собеседника до конца (2 с тишины) и не говорит поверх: заговорили во время её ответа — замолкает и слушает.</small></div><div class="ctl"><div class="tog ${g.dialog?'on':''}" id="gDialog"></div></div></div>
         <div class="field"><div class="lab"><b>Сидеть в Говорилке всегда</b><small>Заходит сама при включении ПК и возвращается, если выкинуло.</small></div><div class="ctl"><div class="tog ${g.autostart?'on':''}" id="gAuto"></div></div></div></div>
       <div class="sec"><h3>Голос в Говорилке</h3><div id="gVoice" style="padding:8px 0 14px"></div></div>
       <div class="sec"><h3>Что там говорили</h3><div class="log" id="gLog" style="margin:8px 0 14px"></div></div>`;
       $('#gModel').value=g.model; $('#gModel').onchange=async()=>toast((await api().gov_action('model',$('#gModel').value)).message);
+      $('#gFish').onchange=async()=>toast((await api().gov_action('fish_model',$('#gFish').value)).message);
       $('#gDialog').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('dialog',ev.target.classList.contains('on'))).message); };
       $('#gAuto').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('autostart',ev.target.classList.contains('on'))).message); };
       $('#gJoin').onclick=async()=>{ toast((await api().gov_action('join')).message); fill(); };
+      $('#gMorni').onclick=async()=>{ toast((await api().gov_action('morni')).message); setTimeout(()=>fill(),4000); };
       $('#gLeave').onclick=async()=>{ toast((await api().gov_action('leave')).message); fill(); };
       $('#gQuit').onclick=async()=>{ if(!confirm('Мартышка уйдёт с сервера совсем и не вернётся сама. Точно?')) return; toast((await api().gov_action('quit')).message); fill(); };
       const vc=document.createElement('div'); $('#gVoice').appendChild(vc); voicePicker(vc,{key:'GOVORILKA_VOICE_ID',value:g.voice,instant:true}); }

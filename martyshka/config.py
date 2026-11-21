@@ -52,6 +52,7 @@ FISH_MODEL = "s2.1-pro-free"
 VOICE_ID = ""
 # Голос в Говорилке (пусто — тот же, что у Мартышки)
 GOVORILKA_VOICE_ID = ""
+GOVORILKA_FISH_MODEL = ""          # модель озвучки в Говорилке; пусто — как у голоса (FISH_MODEL)
 
 # Выразительность голоса: 0.5 — ровнее, 0.9 — эмоциональнее
 VOICE_TEMPERATURE = 0.75

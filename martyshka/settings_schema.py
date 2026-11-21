@@ -11,6 +11,11 @@ from . import config
 SECRET = ("DEEPSEEK_KEY", "FISH_KEY", "TELEGRAM_TOKEN")
 
 
+
+def _fish_models() -> list:
+    from . import fish
+    return list(fish.MODELS)
+
 def _devices(kind: str) -> list[tuple]:
     try:
         import sounddevice as sd
@@ -77,9 +82,10 @@ def schema(extra: dict | None = None) -> dict:
               "value": extra.get("fish_balance", "…"), "ok": None},
              _f("VOICE_ENABLED", "Говорить голосом", "toggle", "Выключено — Мартышка отвечает только текстом."),
              _f("FISH_MODEL", "Модель озвучки", "select",
-                "s2.1-pro-free бесплатна до 30.11.2026 — потом Мартышка сама перейдёт на s2.1-pro (~15 $ за "
-                "1 млн байт текста ≈ 12 часов речи).",
-                options=[("s2.1-pro-free", "S2.1 Pro Free (бесплатно)"), ("s2.1-pro", "S2.1 Pro")]),
+                "S2.1 Pro Free бесплатна до 30.11.2026 (потом сама перейдёт на S2.1 Pro). Drama 3 — самая живая "
+                "игра голосом (шёпот, смех, срывы), но платная; кончатся кредиты — на 30 минут говорит бесплатной. "
+                "1 млн байт ≈ 12 часов речи.",
+                options=_fish_models()),
              _f("VOICE_VOLUME", "Громкость", "slider", "", min=0.3, max=2.0, step=0.05),
              _f("VOICE_OUTPUT_DEVICE", "Куда выводить звук", "select", "", options=_devices("out")),
              _f("VOICE_ID", "Голос Мартышки", "voice"),
