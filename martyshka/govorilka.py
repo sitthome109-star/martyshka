@@ -147,6 +147,7 @@ def stop() -> str:
 MORNI_NOW_FLAG = BOT_DIR / "начать_с_морни.flag"   # кнопка в окне: «начни разговор с Морни сейчас»
 LEFT_FLAG = BOT_DIR / "ушла.txt"                 # брат сам сказал «уйди с сервера совсем» — сторож не возвращает
 SILENCE_FLAG = BOT_DIR / "замолчи.flag"          # кнопка в окне: «Замолчи» — мгновенно перестать говорить
+INTERRUPTED_MARK = "(перебили — замолчала)"      # в истории вместо недосказанного ответа: к нему не возвращаться
 
 
 def quit_server() -> str:
@@ -1111,6 +1112,9 @@ def system_prompt(anger: int = 0, with_morni: bool = False, who: str = "", prese
             "прошлые разговоры и сама вспоминаешь их к месту, ты развиваешься. Говоришь вслух: без списков, "
             "markdown и эмодзи, на языке собеседника. Не повторяйся. Не обсуждай личные данные брата.\n"
             "Здесь со всеми на «ты», никаких «сэр» (это манера другого режима, не Говорилки). "
+            "Если в разговоре видно «(перебили — замолчала)» или «[ЗАКРЫТО]» — тебя оборвали: тот вопрос закрыт. "
+            "Не отвечай на него, не договаривай, не упоминай и не извиняйся — как будто его не было; отвечай "
+            "только на новое, что тебе сказали. "
             "Морни — девушка (о ней всегда в женском роде: «она сказала», «ты сама»). Она говорит длинно, с паузами "
             "между предложениями — дослушивай её до конца, не перебивай. "
             "Морни — бот, она слышит только фразы, которые НАЧИНАЮТСЯ с её имени: обращаешься к Морни — ВСЕГДА "
@@ -1845,14 +1849,19 @@ def _speak_own(instruction: str, mouth, listener, st, who: str = "", tag: str = 
         mouth.synth_stats.clear()
         mouth.anger = longmem.anger(who) if who else 0
         raw = reply_stream(history, mouth, mouth.anger, False, who=who, present=st["present"])
-        mouth.wait_yielding(listener)
+        cut = mouth.wait_yielding(listener)
     finally:
-        sw.finish()
+        cut = sw.finish() or locals().get("cut", False)
         mouth.stopped.clear()
         listener.paused.clear()
     _apply_tone(raw, who, "", mouth.anger)
     _take_tags(raw, who)
     answer = _clean(raw)
+    if cut and answer:                                  # остановили посреди — недосказанное не в историю
+        history.append({"role": "assistant", "content": INTERRUPTED_MARK})
+        _log("система", f"{tag or 'сама'}: перебили — замолчала")
+        st["last_reply_at"], st["chain"] = time.time(), 0
+        return ""
     if answer:
         history.append({"role": "assistant", "content": answer})
         _log(config.GOVORILKA_NICK, f"{answer}   [{tag or 'сама'}]")
@@ -1969,14 +1978,17 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
             mouth.anger = longmem.anger("Морни")
             raw = reply_stream(history, mouth, mouth.anger, with_morni=True, who="Морни",
                                present=st["present"])
-            mouth.wait_stoppable(listener)
+            cut = mouth.wait_stoppable(listener)
         finally:
-            sw.finish()
+            cut = sw.finish() or locals().get("cut", False)
             mouth.stopped.clear()
             listener.paused.clear()
         _apply_tone(raw, "Морни", "", mouth.anger)
         answer = _clean(raw)
-        if answer:
+        if cut:                                         # остановили (кнопка, «стоп») — недосказанное не в историю
+            history.append({"role": "assistant", "content": INTERRUPTED_MARK})
+            _log("система", "замолчала — перебили, этот ответ не договариваю")
+        elif answer:
             history.append({"role": "assistant", "content": answer})
             _log(config.GOVORILKA_NICK, f"{answer}   [сама начала разговор с Морни]")
             longmem.log("говорилка", config.NAME, "", answer)
@@ -2080,7 +2092,12 @@ def _respond(text, mouth, listener, st, initiative=False, speaker="", pre=None):
         # перебили (или сказали «стоп»): полный ответ в историю НЕ пишем — иначе в следующий раз
         # она договаривала бы тот же вопрос заново. Помечаем, что её оборвали, и обнуляем цепочку.
         _log("система", "замолчала — перебили, этот ответ не договариваю")
-        history.append({"role": "assistant", "content": "(начала отвечать, но её перебили — замолчала)"})
+        # злость и память всё равно учитываем: оскорбили и тут же перебили — обида не теряется
+        _apply_tone(raw, who, text, anger, offense.get() if offense else 0, rated=who != SERVER)
+        longmem.log("говорилка", who, text, "(перебили — замолчала)")
+        # вопрос помечаем закрытым — мозг не тянет его в следующий ответ
+        history[-1] = {"role": "user", "content": f"({who}): [ЗАКРЫТО — тема ушла, не упоминай] {text}"}
+        history.append({"role": "assistant", "content": INTERRUPTED_MARK})
         del history[:-60]
         if who != SERVER:
             st["last_who"], st["last_who_at"] = who, time.time()
