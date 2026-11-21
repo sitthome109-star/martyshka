@@ -115,7 +115,9 @@ pub fn project_dir() -> PathBuf {
     }
     if let Ok(exe) = std::env::current_exe() {
         for anc in exe.ancestors() {
-            if anc.join("data").is_dir() && anc.join("martyshka").is_dir() {
+            if anc.join("data").join("settings.json").is_file()
+                || (anc.join("data").is_dir() && anc.join("martyshka").is_dir())
+            {
                 return anc.to_path_buf();
             }
         }

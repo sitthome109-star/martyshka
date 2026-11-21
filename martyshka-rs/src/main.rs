@@ -7,6 +7,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod agent;
+#[cfg(windows)]
 mod audio;
 mod commands;
 mod config;
@@ -72,7 +73,12 @@ fn main() {
     #[cfg(not(windows))]
     {
         let rt = tokio::runtime::Runtime::new().expect("tokio");
-        rt.block_on(telegram::run_forever());
+        rt.block_on(async {
+            tokio::join!(
+                govorilka_ws::run_forever(Arc::new(AtomicBool::new(false))),
+                telegram::run_forever(),
+            );
+        });
     }
 }
 
