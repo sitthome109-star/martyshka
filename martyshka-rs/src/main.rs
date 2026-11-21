@@ -267,6 +267,7 @@ fn run_desktop_ui() {
                     "save_settings" => {
                         if let Some(obj) = args.first().and_then(Value::as_object) {
                             let _ = config::patch(obj.clone());
+                            let _ = govorilka_ws::remote_action(json!({"act": "settings", "patch": obj})).await;
                         }
                         json!({"ok": true, "message": "Сохранено ✓"})
                     }
@@ -577,150 +578,135 @@ fn run_desktop_ui() {
                     }
                     "gov_info" => {
                         let s = config::get();
-                        let ext = govorilka_ws::external_state();
-                        let running = ext.get("running").and_then(Value::as_bool).unwrap_or(false);
-                        let in_voice = ext.get("in_voice").and_then(Value::as_bool).unwrap_or(false);
-                        let muted = ext.get("muted").and_then(Value::as_bool).unwrap_or(false);
-                        let status = ext.get("status").and_then(Value::as_str).unwrap_or("Отключена").to_string();
-                        let users = ext.get("users").cloned().unwrap_or_else(|| json!([]));
-                        let uptime = ext.get("uptime").and_then(Value::as_u64).unwrap_or(0);
-                        json!({
-                            "nick": s.govorilka_nick,
-                            "status": status,
-                            "running": running,
-                            "in_voice": in_voice,
-                            "muted": muted,
-                            "users": users,
-                            "uptime": uptime,
-                            "voice": s.govorilka_voice_id,
-                            "model": s.govorilka_model,
-                            "log": govorilka_ws::recent_log(100),
-                            "fish_model": s.govorilka_fish_model,
-                            "fish_models": [
-                                ["", "По умолчанию (из Настроек)"],
-                                ["s2.1-pro-free", "S2.1 Pro Free (бесплатно, стабильные ударения)"],
-                                ["s2.1-pro", "S2.1 Pro (платно)"],
-                                ["drama-3", "Drama 3 (платно, максимум эмоций)"]
-                            ]
-                        })
+                        let fish_models = json!([
+                            ["", "По умолчанию (из Настроек)"],
+                            ["s2.1-pro-free", "S2.1 Pro Free (бесплатно, стабильные ударения)"],
+                            ["s2.1-pro", "S2.1 Pro (платно)"],
+                            ["drama-3", "Drama 3 (платно, максимум эмоций)"]
+                        ]);
+                        if let Some(mut rem) = govorilka_ws::remote_status().await {
+                            if let Some(m) = rem.as_object_mut() {
+                                m.insert("fish_models".into(), fish_models);
+                                m.insert("remote_url".into(), json!(s.govorilka_remote_url));
+                            }
+                            rem
+                        } else {
+                            let ext = govorilka_ws::external_state();
+                            json!({
+                                "nick": s.govorilka_nick,
+                                "status": ext.get("status").and_then(Value::as_str).unwrap_or("Отключена"),
+                                "running": ext.get("running").and_then(Value::as_bool).unwrap_or(false),
+                                "in_voice": ext.get("in_voice").and_then(Value::as_bool).unwrap_or(false),
+                                "muted": ext.get("muted").and_then(Value::as_bool).unwrap_or(false),
+                                "users": ext.get("users").cloned().unwrap_or_else(|| json!([])),
+                                "uptime": ext.get("uptime").and_then(Value::as_u64).unwrap_or(0),
+                                "voice": s.govorilka_voice_id,
+                                "model": s.govorilka_model,
+                                "personality_extra": s.personality_extra,
+                                "remote": false,
+                                "remote_url": s.govorilka_remote_url,
+                                "log": govorilka_ws::recent_log(100),
+                                "fish_model": s.govorilka_fish_model,
+                                "fish_models": fish_models
+                            })
+                        }
                     }
                     "gov_action" => {
                         let act = args.first().and_then(Value::as_str).unwrap_or("");
                         let val = args.get(1);
                         let val2 = args.get(2);
                         let local = govorilka_ws::is_running();
-                        match act {
-                            "ensure_online" | "join" => {
-                                let ext_on = govorilka_ws::external_state().get("running").and_then(Value::as_bool).unwrap_or(false);
-                                if local {
-                                    govorilka_ws::join_voice_cmd();
-                                    json!({"ok": true, "message": "Захожу в войс!"})
-                                } else if ext_on {
-                                    govorilka_ws::enqueue_external_cmd(json!({"act": "join_voice"}));
-                                    json!({"ok": true, "message": "Команда входа в войс отправлена!"})
-                                } else {
-                                    if let Ok(exe) = std::env::current_exe() {
-                                        let _ = std::process::Command::new(exe)
-                                            .arg("--govorilka")
-                                            .current_dir(config::project_dir())
-                                            .spawn();
-                                    }
-                                    json!({"ok": true, "message": "Запускаю 24/7 подключение к Говорилке!"})
-                                }
+
+                        if act == "remote_url" {
+                            let u = val.and_then(Value::as_str).unwrap_or("").trim().to_string();
+                            let mut mp = Map::new();
+                            mp.insert("GOVORILKA_REMOTE_URL".into(), json!(u));
+                            let _ = config::patch(mp);
+                            json!({"ok": true, "message": if u.is_empty() { "Переключено на локальный режим" } else { "Адрес сервера сохранён ✓" }})
+                        } else if act == "personality" {
+                            let p = val.and_then(Value::as_str).unwrap_or("").to_string();
+                            let mut mp = Map::new();
+                            mp.insert("PERSONALITY_EXTRA".into(), json!(p));
+                            let _ = config::patch(mp.clone());
+                            if let Some(r) = govorilka_ws::remote_action(json!({"act": "settings", "patch": mp})).await {
+                                r
+                            } else {
+                                if !local { govorilka_ws::enqueue_external_cmd(json!({"act": "settings", "patch": mp})); }
+                                json!({"ok": true, "message": "Характер обновлён ✓"})
                             }
-                            "leave_voice" | "leave" => {
-                                if local {
-                                    govorilka_ws::leave_voice_cmd();
-                                } else {
-                                    govorilka_ws::enqueue_external_cmd(json!({"act": "leave_voice"}));
-                                }
-                                json!({"ok": true, "message": "Выхожу из войса (остаюсь в чате)."})
+                        } else if act == "nick" {
+                            let n = val.and_then(Value::as_str).unwrap_or("Мартышка").trim().to_string();
+                            let mut mp = Map::new();
+                            mp.insert("GOVORILKA_NICK".into(), json!(n));
+                            let _ = config::patch(mp.clone());
+                            if let Some(r) = govorilka_ws::remote_action(json!({"act": "settings", "patch": mp})).await {
+                                r
+                            } else {
+                                json!({"ok": true, "message": format!("Ник: {n} ✓")})
                             }
-                            "silence" => {
-                                if local {
-                                    govorilka_ws::silence();
-                                } else {
-                                    govorilka_ws::enqueue_external_cmd(json!({"act": "silence"}));
-                                }
-                                json!({"ok": true, "message": "Замолчала!"})
+                        } else if act == "avatar" {
+                            let b64 = val.and_then(Value::as_str).unwrap_or("");
+                            let payload = json!({"act": "avatar", "jpeg_base64": b64});
+                            if let Some(r) = govorilka_ws::remote_action(payload.clone()).await {
+                                r
+                            } else if local {
+                                govorilka_ws::apply_control_action(&payload)
+                            } else {
+                                govorilka_ws::enqueue_external_cmd(payload);
+                                json!({"ok": true, "message": "Аватарка обновлена ✓"})
                             }
-                            "mute" => {
-                                let on = val.and_then(Value::as_bool).unwrap_or(false);
-                                if local {
-                                    govorilka_ws::set_muted_listen(on);
-                                } else {
-                                    govorilka_ws::enqueue_external_cmd(json!({"act": "mute", "val": on}));
-                                }
-                                json!({"ok": true, "message": if on { "Тихий режим включён (только слушаю)" } else { "Снова отвечаю голосом!" }})
-                            }
-                            "morni" => {
-                                if local {
-                                    govorilka_ws::trigger_morni();
-                                } else {
-                                    govorilka_ws::enqueue_external_cmd(json!({"act": "morni"}));
-                                }
-                                json!({"ok": true, "message": "Диалог с Морни включён на 4 минуты!"})
-                            }
-                            "clear" => {
-                                if local {
-                                    govorilka_ws::clear_history();
-                                } else {
-                                    govorilka_ws::enqueue_external_cmd(json!({"act": "clear"}));
-                                }
-                                json!({"ok": true, "message": "Контекст беседы очищен ✓"})
-                            }
-                            "chat" => {
-                                let text = val.and_then(Value::as_str).unwrap_or("").trim();
-                                let ch = val2.and_then(Value::as_str).unwrap_or("общий");
-                                if text.is_empty() {
-                                    json!({"ok": false, "message": "Напиши текст сообщения"})
-                                } else {
-                                    if local {
-                                        govorilka_ws::send_chat_text(ch, text);
-                                    } else {
-                                        govorilka_ws::enqueue_external_cmd(json!({"act": "chat", "channel": ch, "text": text}));
-                                    }
-                                    json!({"ok": true, "message": format!("Отправлено в #{ch} ✓")})
-                                }
-                            }
-                            "say" => {
-                                let text = val.and_then(Value::as_str).unwrap_or("").trim();
-                                if text.is_empty() {
-                                    json!({"ok": false, "message": "Напиши, что сказать в войс"})
-                                } else {
-                                    if local {
-                                        govorilka_ws::speak_in_voice(text.to_string());
-                                    } else {
-                                        govorilka_ws::enqueue_external_cmd(json!({"act": "say", "text": text}));
-                                    }
-                                    json!({"ok": true, "message": "Озвучиваю в войс!"})
-                                }
-                            }
-                            "topic" | "debate" => {
-                                let topic = val.and_then(Value::as_str).unwrap_or("").trim();
-                                let with_morni = act == "debate";
-                                if local {
-                                    govorilka_ws::start_topic(topic.to_string(), with_morni);
-                                } else {
-                                    govorilka_ws::enqueue_external_cmd(json!({"act": "topic", "text": topic, "morni": with_morni}));
-                                }
-                                json!({"ok": true, "message": if with_morni { "Запускаю спор с Морни!" } else { "Вкидываю тему в войс!" }})
-                            }
-                            "model" => {
-                                let m = val.and_then(Value::as_str).unwrap_or(deepseek::FLASH).to_string();
-                                let mut mp = Map::new();
-                                mp.insert("GOVORILKA_MODEL".into(), json!(m));
-                                let _ = config::patch(mp);
+                        } else if act == "model" {
+                            let m = val.and_then(Value::as_str).unwrap_or(deepseek::FLASH).to_string();
+                            let mut mp = Map::new();
+                            mp.insert("GOVORILKA_MODEL".into(), json!(m));
+                            let _ = config::patch(mp.clone());
+                            if let Some(r) = govorilka_ws::remote_action(json!({"act": "settings", "patch": mp})).await {
+                                r
+                            } else {
                                 json!({"ok": true, "message": format!("Мозг в Говорилке: {m}")})
                             }
-                            "fish_model" => {
-                                let fm = val.and_then(Value::as_str).unwrap_or("").to_string();
-                                let mut mp = Map::new();
-                                mp.insert("GOVORILKA_FISH_MODEL".into(), json!(fm));
-                                let _ = config::patch(mp);
+                        } else if act == "fish_model" {
+                            let fm = val.and_then(Value::as_str).unwrap_or("").to_string();
+                            let mut mp = Map::new();
+                            mp.insert("GOVORILKA_FISH_MODEL".into(), json!(fm));
+                            let _ = config::patch(mp.clone());
+                            if let Some(r) = govorilka_ws::remote_action(json!({"act": "settings", "patch": mp})).await {
+                                r
+                            } else {
                                 json!({"ok": true, "message": "Движок озвучки обновлён ✓"})
                             }
-                            _ => json!({"ok": true, "message": "Готово ✓"}),
+                        } else if act == "ensure_online" && config::get().govorilka_remote_url.trim().is_empty() {
+                            let ext_on = govorilka_ws::external_state().get("running").and_then(Value::as_bool).unwrap_or(false);
+                            if !local && !ext_on {
+                                if let Ok(exe) = std::env::current_exe() {
+                                    let _ = std::process::Command::new(exe)
+                                        .arg("--govorilka")
+                                        .current_dir(config::project_dir())
+                                        .spawn();
+                                }
+                                json!({"ok": true, "message": "Запускаю 24/7 подключение к Говорилке!"})
+                            } else {
+                                json!({"ok": true, "message": "Уже в сети!"})
+                            }
+                        } else {
+                            let payload = match act {
+                                "chat" => json!({"act": "chat", "text": val.and_then(Value::as_str).unwrap_or(""), "channel": val2.and_then(Value::as_str).unwrap_or("общий")}),
+                                "say" => json!({"act": "say", "text": val.and_then(Value::as_str).unwrap_or("")}),
+                                "topic" | "debate" => json!({"act": act, "text": val.and_then(Value::as_str).unwrap_or(""), "morni": act == "debate"}),
+                                "mute" => json!({"act": "mute", "val": val.and_then(Value::as_bool).unwrap_or(false)}),
+                                "remember" => json!({"act": "remember", "who": val.and_then(Value::as_str).unwrap_or(""), "fact": val2.and_then(Value::as_str).unwrap_or("")}),
+                                "forget" => json!({"act": "forget", "who": val.and_then(Value::as_str).unwrap_or(""), "fact": val2.and_then(Value::as_str).unwrap_or("")}),
+                                "calm" => json!({"act": "calm", "who": val.and_then(Value::as_str).unwrap_or("")}),
+                                _ => json!({"act": act}),
+                            };
+                            if let Some(r) = govorilka_ws::remote_action(payload.clone()).await {
+                                r
+                            } else if local {
+                                govorilka_ws::apply_control_action(&payload)
+                            } else {
+                                govorilka_ws::enqueue_external_cmd(payload);
+                                json!({"ok": true, "message": "Команда отправлена ✓"})
+                            }
                         }
                     }
                     _ => json!({"ok": false}),

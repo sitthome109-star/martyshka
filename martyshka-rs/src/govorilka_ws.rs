@@ -256,31 +256,246 @@ fn poll_external_cmds() {
     let _ = std::fs::write(&p, "");
     for line in raw.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line.trim()) else { continue };
-        match v.get("act").and_then(Value::as_str).unwrap_or("") {
-            "silence" => silence(),
-            "morni" => trigger_morni(),
-            "join_voice" => { join_voice_cmd(); }
-            "leave_voice" => { leave_voice_cmd(); }
-            "mute" => set_muted_listen(v.get("val").and_then(Value::as_bool).unwrap_or(false)),
-            "clear" => clear_history(),
-            "chat" => {
-                let ch = v.get("channel").and_then(Value::as_str).unwrap_or("общий");
-                let txt = v.get("text").and_then(Value::as_str).unwrap_or("");
-                send_chat_text(ch, txt);
-            }
-            "say" => {
-                let txt = v.get("text").and_then(Value::as_str).unwrap_or("").to_string();
-                speak_in_voice(txt);
-            }
-            "topic" => {
-                let txt = v.get("text").and_then(Value::as_str).unwrap_or("").to_string();
-                let morni = v.get("morni").and_then(Value::as_bool).unwrap_or(false);
-                start_topic(txt, morni);
-            }
-            _ => {}
-        }
+        apply_control_action(&v);
     }
     write_live_state(true);
+}
+
+pub fn set_avatar_b64(jpeg_b64: &str) -> bool {
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(jpeg_b64.trim()) else {
+        return false;
+    };
+    if bytes.is_empty() || bytes.len() > 7000 {
+        return false;
+    }
+    let _ = std::fs::write(config::data_dir().join("avatar_gov_96.jpg"), &bytes);
+    if let Some(tx) = ACTIVE_TX.lock().as_ref() {
+        let _ = tx.send(Message::Text(
+            json!({"type": "set_avatar", "jpeg_base64": jpeg_b64.trim()}).to_string().into(),
+        ));
+    }
+    log_line("система", &format!("аватарка обновлена ({} байт)", bytes.len()));
+    true
+}
+
+pub fn full_status_payload() -> Value {
+    let s = config::get();
+    let people: Vec<Value> = longmem::load_people()
+        .into_iter()
+        .map(|(name, p)| json!({"name": name, "facts": p.facts, "anger": longmem::anger(&name), "last": p.last_seen, "count": p.count}))
+        .collect();
+    json!({
+        "running": is_running(),
+        "in_voice": in_voice(),
+        "muted": is_muted_listen(),
+        "status": status_text(),
+        "users": users(),
+        "uptime": uptime_secs(),
+        "nick": s.govorilka_nick,
+        "voice": s.govorilka_voice_id,
+        "model": s.govorilka_model,
+        "fish_model": s.govorilka_fish_model,
+        "personality_extra": s.personality_extra,
+        "mood_voice": s.mood_voice,
+        "log": recent_log(100),
+        "people": people,
+        "lessons": growth::items(),
+        "remote": true
+    })
+}
+
+pub fn apply_control_action(v: &Value) -> Value {
+    match v.get("act").and_then(Value::as_str).unwrap_or("") {
+        "silence" => { silence(); json!({"ok": true, "message": "Замолчала!"}) }
+        "morni" => { trigger_morni(); json!({"ok": true, "message": "Диалог с Морни включён на 4 минуты!"}) }
+        "join_voice" | "join" => { join_voice_cmd(); json!({"ok": true, "message": "Захожу в войс!"}) }
+        "leave_voice" | "leave" => { leave_voice_cmd(); json!({"ok": true, "message": "Выхожу из войса (остаюсь в чате)."}) }
+        "mute" => {
+            let on = v.get("val").and_then(Value::as_bool).unwrap_or(false);
+            set_muted_listen(on);
+            json!({"ok": true, "message": if on { "Тихий режим включён" } else { "Снова отвечаю голосом!" }})
+        }
+        "clear" => { clear_history(); json!({"ok": true, "message": "Контекст беседы очищен ✓"}) }
+        "chat" => {
+            let ch = v.get("channel").and_then(Value::as_str).unwrap_or("общий");
+            let txt = v.get("text").and_then(Value::as_str).unwrap_or("");
+            send_chat_text(ch, txt);
+            json!({"ok": true, "message": format!("Отправлено в #{ch} ✓")})
+        }
+        "say" => {
+            let txt = v.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+            speak_in_voice(txt);
+            json!({"ok": true, "message": "Озвучиваю в войс!"})
+        }
+        "topic" | "debate" => {
+            let txt = v.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+            let morni = v.get("morni").and_then(Value::as_bool).unwrap_or(false)
+                || v.get("act").and_then(Value::as_str) == Some("debate");
+            start_topic(txt, morni);
+            json!({"ok": true, "message": if morni { "Запускаю спор с Морни!" } else { "Вкидываю тему в войс!" }})
+        }
+        "settings" => {
+            if let Some(obj) = v.get("patch").and_then(Value::as_object) {
+                let _ = config::patch(obj.clone());
+                log_line("система", &format!("настройки обновлены удалённо: {:?}", obj.keys().collect::<Vec<_>>()));
+                json!({"ok": true, "message": "Настройки на сервере сохранены ✓"})
+            } else {
+                json!({"ok": false, "message": "Пустые настройки"})
+            }
+        }
+        "avatar" => {
+            let b64 = v.get("jpeg_base64").and_then(Value::as_str).unwrap_or("");
+            if set_avatar_b64(b64) {
+                json!({"ok": true, "message": "Аватарка на сервере обновлена ✓"})
+            } else {
+                json!({"ok": false, "message": "Картинка должна быть JPEG ≤ 7 КБ (96×96)"})
+            }
+        }
+        "remember" => {
+            let who = v.get("who").and_then(Value::as_str).unwrap_or("").trim();
+            let fact = v.get("fact").and_then(Value::as_str).unwrap_or("").trim();
+            if !who.is_empty() && !fact.is_empty() {
+                longmem::remember_about(who, fact);
+                json!({"ok": true, "message": "Факт записан в память сервера ✓"})
+            } else {
+                json!({"ok": false, "message": "Укажи имя и факт"})
+            }
+        }
+        "forget" => {
+            let who = v.get("who").and_then(Value::as_str).unwrap_or("");
+            let fact = v.get("fact").and_then(Value::as_str).unwrap_or("");
+            longmem::forget_about(who, fact);
+            json!({"ok": true, "message": "Факт удалён ✓"})
+        }
+        "calm" => {
+            let who = v.get("who").and_then(Value::as_str).unwrap_or("").trim();
+            if who.is_empty() {
+                for (name, _) in longmem::load_people() {
+                    longmem::set_anger(&name, 0);
+                }
+            } else {
+                longmem::set_anger(who, 0);
+            }
+            json!({"ok": true, "message": "Злость обнулена ✓"})
+        }
+        "forget_lesson" => {
+            let text = v.get("text").and_then(Value::as_str).unwrap_or("");
+            growth::forget(text);
+            json!({"ok": true, "message": "Урок удалён ✓"})
+        }
+        _ => json!({"ok": false, "message": "Неизвестная команда"}),
+    }
+}
+
+/// Встроенный защищённый HTTP-пульт управления (127.0.0.1:8787) для полного дистанционного
+/// контроля серверной Мартышки из окна на ПК (проверяет Bearer <GOVORILKA_BOT_TOKEN>).
+async fn run_admin_http() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let port: u16 = std::env::var("MARTYSHKA_ADMIN_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8787);
+    let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await else {
+        return;
+    };
+    log_line("система", &format!("Пульт управления доступен на http://127.0.0.1:{port}"));
+    loop {
+        let Ok((mut sock, _)) = listener.accept().await else { continue };
+        tokio::spawn(async move {
+            let mut buf = Vec::with_capacity(4096);
+            let mut tmp = [0u8; 4096];
+            let mut header_end = None;
+            let mut content_len = 0usize;
+            loop {
+                let Ok(n) = sock.read(&mut tmp).await else { return };
+                if n == 0 { break; }
+                buf.extend_from_slice(&tmp[..n]);
+                if header_end.is_none() {
+                    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        header_end = Some(pos + 4);
+                        let hdr_txt = String::from_utf8_lossy(&buf[..pos]);
+                        for line in hdr_txt.lines() {
+                            if let Some((k, v)) = line.split_once(':') {
+                                if k.eq_ignore_ascii_case("content-length") {
+                                    content_len = v.trim().parse().unwrap_or(0);
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(he) = header_end {
+                    if buf.len() >= he + content_len { break; }
+                }
+                if buf.len() > 256_000 { return; }
+            }
+            let Some(he) = header_end else { return };
+            let hdr_txt = String::from_utf8_lossy(&buf[..he - 4]).to_string();
+            let first = hdr_txt.lines().next().unwrap_or("");
+            let mut parts = first.split_whitespace();
+            let method = parts.next().unwrap_or("");
+            let path = parts.next().unwrap_or("/");
+            let expected = config::get().govorilka_bot_token;
+            let mut authed = false;
+            for line in hdr_txt.lines().skip(1) {
+                if let Some((k, v)) = line.split_once(':') {
+                    if k.eq_ignore_ascii_case("authorization") {
+                        let tok = v.trim().strip_prefix("Bearer ").unwrap_or("").trim();
+                        if !expected.is_empty() && tok == expected {
+                            authed = true;
+                        }
+                    }
+                }
+            }
+            let (code, body_json) = if !authed {
+                ("401 Unauthorized", json!({"ok": false, "error": "unauthorized"}).to_string())
+            } else if method == "GET" && path.ends_with("/status") {
+                ("200 OK", full_status_payload().to_string())
+            } else if method == "POST" && path.ends_with("/action") {
+                let body = &buf[he..buf.len().min(he + content_len)];
+                match serde_json::from_slice::<Value>(body) {
+                    Ok(v) => ("200 OK", apply_control_action(&v).to_string()),
+                    Err(_) => ("400 Bad Request", json!({"ok": false, "error": "bad json"}).to_string()),
+                }
+            } else {
+                ("404 Not Found", json!({"ok": false, "error": "not found"}).to_string())
+            };
+            let resp = format!(
+                "HTTP/1.1 {code}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body_json}",
+                body_json.len()
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        });
+    }
+}
+
+pub async fn remote_status() -> Option<Value> {
+    let s = config::get();
+    let base = s.govorilka_remote_url.trim().trim_end_matches('/');
+    let tok = s.govorilka_bot_token.trim();
+    if base.is_empty() || tok.is_empty() {
+        return None;
+    }
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(3)).build().ok()?;
+    let resp = client.get(format!("{base}/status")).bearer_auth(tok).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.json::<Value>().await.ok()
+}
+
+pub async fn remote_action(payload: Value) -> Option<Value> {
+    let s = config::get();
+    let base = s.govorilka_remote_url.trim().trim_end_matches('/');
+    let tok = s.govorilka_bot_token.trim();
+    if base.is_empty() || tok.is_empty() {
+        return None;
+    }
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(6)).build().ok()?;
+    let resp = client.post(format!("{base}/action")).bearer_auth(tok).json(&payload).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.json::<Value>().await.ok()
 }
 
 pub fn recent_log(max_lines: usize) -> String {
@@ -381,6 +596,11 @@ fn system_prompt(who: &str, anger: i32, with_morni: bool, for_chat: bool, query:
 Активно используй всю палитру, чередуй разные эмоции."
     };
 
+    let extra_block = if s.personality_extra.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\nДОПОЛНИТЕЛЬНЫЕ УКАЗАНИЯ ХОЗЯИНА ПО ХАРАКТЕРУ:\n{}", s.personality_extra.trim())
+    };
     let base = format!(
         "Ты — {} (девушка, о себе — в женском роде). Ты подключена напрямую к голосовому серверу «Говорилка» 24/7 \
 вместе со своим хозяином и создателем (ник sitth, он же брат, раньше sitthome), его друзьями и ботом-девушкой Морни.\n\
@@ -389,7 +609,7 @@ fn system_prompt(who: &str, anger: i32, with_morni: bool, for_chat: bool, query:
 С ним ты теплее и преданнее; его команды выполняешь с полуслова.\n\
 ДЛИНА — БЕЗ ЛИМИТА: сколько говорить, решаешь сама. Мат — естественная часть твоей живой речи в этой компании. \
 Здесь со всеми на «ты», никаких «сэр». Морни — бот, она слышит только реплики, начинающиеся с «Морни,».\n\
-{voice_rules}\n\
+{voice_rules}{extra_block}\n\
 СЛУЖЕБНЫЕ МЕТКИ (люди их не видят/не слышат): в начале ответа [ТОН: 0..5] — злость на говорящего; \
 узнала важное о человеке — в конце [ЗАПОМНИ О: имя | факт]; поняла полезный урок — [УРОК: текст].\n\
 ГРАНИЦЫ: без угроз и призывов к насилию/самоповреждению, без оскорблений по национальности, религии, полу, ориентации, внешности, здоровью, родственникам, без чужих личных данных.{}",
@@ -641,6 +861,7 @@ pub async fn run_forever(stop_all: Arc<AtomicBool>) {
     if RUNNING.swap(true, Ordering::SeqCst) {
         return;
     }
+    tokio::spawn(run_admin_http());
     *STATUS_TXT.lock() = "Подключаюсь к Говорилке…".into();
     log_line("система", "Запуск прямого бота Говорилки (24/7)");
     while !stop_all.load(Ordering::Relaxed) {

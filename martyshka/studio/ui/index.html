@@ -1025,7 +1025,7 @@ async function renderGov(){ const box=$('#pg');
       <p class="pd">Мартышка подключена напрямую к серверу как «${esc(g.nick)}» — без второго окна и кабелей. Выход из войса и команды работают <b>только от тебя</b> (в чате и голосом в войсе).</p>
       <div class="sec">
         <div class="card" style="margin:12px 0">
-          <h4>Прямое подключение <span class="pill" id="gst"></span> <span class="pill" id="gvoice"></span> <small id="gup" style="margin-left:auto;color:var(--muted);font-weight:400"></small></h4>
+          <h4>Прямое подключение <span class="pill" id="gst"></span> <span class="pill" id="gvoice"></span> <span class="pill" id="gmode"></span> <small id="gup" style="margin-left:auto;color:var(--muted);font-weight:400"></small></h4>
           <small id="gstatus" style="color:var(--muted)"></small>
           <div class="user-chips" id="gUsers"></div>
           <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
@@ -1052,6 +1052,9 @@ async function renderGov(){ const box=$('#pg');
         </div>
         <div class="field"><div class="lab"><b>Мозг на сервере</b><small>Flash отвечает мгновенно, Pro — думает глубже.</small></div><div class="ctl"><select class="in" id="gModel"><option value="deepseek-flash">DeepSeek Flash</option><option value="deepseek-v4-pro">DeepSeek Pro</option></select></div></div>
         <div class="field"><div class="lab"><b>Озвучка в войсе</b><small>S2.1 Pro Free — бесплатно со стабильными русскими ударениями. Drama 3 — максимум эмоций (платно).</small></div><div class="ctl"><select class="in" id="gFish">${g.fish_models.map(([k,n])=>`<option value="${k}" ${k===g.fish_model?'selected':''}>${esc(n)}</option>`).join('')}</select></div></div>
+        <div class="field wide"><div class="lab"><b>Характер и доп. инструкции на сервере</b><small>Любые правила поведения (например: «будь мягче», «шути дерзко», «подкалывай Enbulih») — применяются сразу со следующей реплики.</small></div><div class="ctl" style="flex-direction:column;align-items:stretch"><textarea class="in" id="gPers" placeholder="Например: общайся дерзко, шути по-чёрному, всегда защищай брата..."></textarea><div style="display:flex;justify-content:flex-end;margin-top:6px"><button class="btn pri" id="gSavePers">Сохранить характер</button></div></div></div>
+        <div class="field"><div class="lab"><b>Ник и аватарка в Говорилке</b><small>Выбери любую картинку — сама сожмётся в 96×96 и сразу обновится на сервере.</small></div><div class="ctl"><input class="in" id="gNick" style="width:125px" value="${esc(g.nick)}"><button class="btn" id="gSaveNick">Ник</button><input type="file" id="gAvFile" accept="image/*" style="display:none"><button class="btn" id="gAvBtn">Аватарка</button></div></div>
+        <div class="field"><div class="lab"><b>Пульт удалённого сервера</b><small>Когда Мартышка запущена на сервере Говорилки, вставь сюда её адрес (например, https://gv.34-107-2-200.sslip.io/martyshka-api).</small></div><div class="ctl"><input class="in" id="gRemUrl" placeholder="https://.../martyshka-api" value="${esc(g.remote_url||'')}"><button class="btn" id="gSaveRem">ОК</button></div></div>
       </div>
       <div class="sec"><h3>Команды хозяина в чате Говорилки</h3><p class="sd">Кликни по команде, чтобы скопировать. В войсе скажи «Мартышка, выйди» — выйдет только по твоей просьбе.</p>
         <div class="cmd-grid" id="gCmds">${CMDS.map(([c,d])=>`<button class="cmd-chip" data-c="${esc(c.split(' ')[0])}"><b>${esc(c)}</b><small>${esc(d)}</small></button>`).join('')}</div>
@@ -1060,6 +1063,19 @@ async function renderGov(){ const box=$('#pg');
       <div class="sec"><h3>Живой журнал</h3><div class="log" id="gLog" style="margin:8px 0 14px"></div></div>`;
       $('#gModel').value=g.model; $('#gModel').onchange=async()=>toast((await api().gov_action('model',$('#gModel').value)).message);
       $('#gFish').onchange=async()=>toast((await api().gov_action('fish_model',$('#gFish').value)).message);
+      $('#gPers').value=g.personality_extra||'';
+      $('#gSavePers').onclick=async()=>toast((await api().gov_action('personality',$('#gPers').value)).message);
+      $('#gSaveNick').onclick=async()=>toast((await api().gov_action('nick',$('#gNick').value)).message);
+      $('#gSaveRem').onclick=async()=>{ toast((await api().gov_action('remote_url',$('#gRemUrl').value)).message); setTimeout(()=>fill(false),500); };
+      $('#gAvBtn').onclick=()=>$('#gAvFile').click();
+      $('#gAvFile').onchange=ev=>{ const f=ev.target.files[0]; if(!f) return; const img=new Image();
+        img.onload=async()=>{ const c=document.createElement('canvas'); c.width=96; c.height=96; const ctx=c.getContext('2d');
+          const m=Math.min(img.width,img.height); ctx.drawImage(img,(img.width-m)/2,(img.height-m)/2,m,m,0,0,96,96);
+          let q=0.82, dataUrl=c.toDataURL('image/jpeg',q);
+          while(dataUrl.length>9000 && q>0.3){ q-=0.1; dataUrl=c.toDataURL('image/jpeg',q); }
+          const b64=dataUrl.split(',')[1]||'';
+          toast((await api().gov_action('avatar',b64)).message); };
+        img.src=URL.createObjectURL(f); ev.target.value=''; };
       $('#gEnsure').onclick=async()=>{ toast((await api().gov_action('ensure_online')).message); setTimeout(()=>fill(false),1500); };
       $('#gSilence').onclick=async()=>{ toast((await api().gov_action('silence')).message); };
       $('#gMute').onclick=async()=>{ const next=!$('#gMute').classList.contains('pri'); toast((await api().gov_action('mute',next)).message); fill(false); };
@@ -1074,6 +1090,7 @@ async function renderGov(){ const box=$('#pg');
     const s=$('#gst'); if(!s) return;
     s.textContent=g.running?'В сети 24/7':'Не в сети'; s.className='pill '+(g.running?'ok':'');
     const gv=$('#gvoice'); gv.textContent=g.in_voice?'В войсе':'Только в чате'; gv.className='pill '+(g.in_voice?'ok':'');
+    const gm=$('#gmode'); gm.textContent=g.remote?'Сервер 24/7':'Локально (ПК)'; gm.className='pill '+(g.remote?'ok':'');
     $('#gup').textContent=g.running&&g.uptime?'онлайн '+fmtUp(g.uptime):'';
     $('#gEnsure').style.display=g.running?'none':'inline-flex';
     const mb=$('#gMute'); mb.classList.toggle('pri',!!g.muted); mb.textContent=g.muted?'Тихий режим: ВКЛ':'Тихий режим';

@@ -77,6 +77,8 @@ pub struct Settings {
     pub govorilka_model: String,
     #[serde(default, rename = "GOVORILKA_FISH_MODEL")]
     pub govorilka_fish_model: String,
+    #[serde(default, rename = "GOVORILKA_REMOTE_URL")]
+    pub govorilka_remote_url: String,
 }
 
 fn d_gov_model() -> String { "deepseek-flash".into() }
