@@ -83,6 +83,18 @@ pub fn is_owner(name: &str) -> bool {
     !name.trim().is_empty() && norm(name) == OWNER
 }
 
+pub fn is_ignored_person(name: &str) -> bool {
+    let low = name.trim().to_lowercase();
+    low.is_empty()
+        || low == "?"
+        || low.contains("кто-то на сервере")
+        || low.contains("кто то на сервере")
+        || low == "мартышка"
+        || low == "martyshka"
+        || low == "сервер"
+        || low == "система"
+}
+
 pub fn load_people() -> HashMap<String, Person> {
     let raw: HashMap<String, Person> = fs::read_to_string(people_file())
         .ok()
@@ -90,7 +102,13 @@ pub fn load_people() -> HashMap<String, Person> {
         .unwrap_or_default();
     let mut out: HashMap<String, Person> = HashMap::new();
     for (k, p) in raw {
+        if is_ignored_person(&k) {
+            continue;
+        }
         let nk = norm(&k);
+        if is_ignored_person(&nk) {
+            continue;
+        }
         let e = out.entry(nk).or_default();
         for f in p.facts {
             let fl = f.trim().to_lowercase();
@@ -148,7 +166,13 @@ pub fn merge_people(incoming: HashMap<String, Person>) -> HashMap<String, Person
     let _g = LOCK.lock();
     let mut cur = load_people();
     for (raw_name, inc) in incoming {
+        if is_ignored_person(&raw_name) {
+            continue;
+        }
         let key = norm(&raw_name);
+        if is_ignored_person(&key) {
+            continue;
+        }
         let entry = cur.entry(key).or_default();
         for f in inc.facts {
             let fl = f.trim().to_lowercase();
@@ -190,6 +214,9 @@ pub fn rating(name: &str) -> i32 {
 }
 
 pub fn set_rating(name: &str, value: i32) -> i32 {
+    if is_ignored_person(name) {
+        return 0;
+    }
     let key = norm(name);
     let val = value.clamp(-100, 100);
     let _g = LOCK.lock();
@@ -204,6 +231,9 @@ pub fn set_rating(name: &str, value: i32) -> i32 {
 }
 
 pub fn add_rating(name: &str, delta: i32) -> i32 {
+    if is_ignored_person(name) {
+        return 0;
+    }
     let key = norm(name);
     let _g = LOCK.lock();
     let mut ps = load_people();
@@ -261,8 +291,11 @@ pub fn log(source: &str, who: &str, text: &str, reply: &str) {
             let _ = writeln!(f, "{line}");
         }
     }
-    let mut ps = load_people();
     let key = norm(who);
+    if is_ignored_person(&key) {
+        return;
+    }
+    let mut ps = load_people();
     let entry = ps.entry(key).or_insert_with(|| Person {
         first_seen: now_iso_min(),
         ..Default::default()
