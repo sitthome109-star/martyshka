@@ -1003,6 +1003,7 @@ async function renderGov(){ const box=$('#pg');
     ['м!список','Полный список всех команд (для всех)'],
     ['м!войс','Зайти в голосовой канал (для всех)'],
     ['м!выйди','Выйти из войса в чат (для всех)'],
+    ['м!диалог [вкл|выкл]','Режим диалога: перебивать и говорить без имени (для всех)'],
     ['м!кто','Кто сейчас в войсе (для всех)'],
     ['м!рейтинг [имя]','Социальный рейтинг -100..+100 (для всех)'],
     ['м!поиск <запрос>','Живой поиск в интернете (для всех)'],
@@ -1079,6 +1080,7 @@ async function renderGov(){ const box=$('#pg');
         </div>
         <div class="field"><div class="lab"><b>Мозг на сервере</b><small>Flash отвечает мгновенно, Pro — думает глубже.</small></div><div class="ctl"><select class="in" id="gModel"><option value="deepseek-flash">DeepSeek Flash</option><option value="deepseek-v4-pro">DeepSeek Pro</option></select></div></div>
         <div class="field"><div class="lab"><b>Озвучка в войсе</b><small>S2.1 Pro Free — бесплатно со стабильными русскими ударениями. Drama 3 — максимум эмоций (платно).</small></div><div class="ctl"><select class="in" id="gFish">${g.fish_models.map(([k,n])=>`<option value="${k}" ${k===g.fish_model?'selected':''}>${esc(n)}</option>`).join('')}</select></div></div>
+        <div class="field"><div class="lab"><b>Режим диалога</b><small>Собеседник, с которым Мартышка сейчас говорит, может перебивать её любой фразой и общаться без имени «Мартышка» (45 с окно). В чате для всех: <b>м!диалог</b>.</small></div><div class="ctl"><div class="tog ${g.dialog!==false?'on':''}" id="gDialog"></div></div></div>
         <div class="field"><div class="lab"><b>Живые приветствия при входе</b><small>Когда кто-то заходит в голосовой канал — Мартышка сама коротко здоровается по имени (вспоминая факт о нём).</small></div><div class="ctl"><div class="tog ${g.greet?'on':''}" id="gGreet"></div></div></div>
         <div class="field"><div class="lab"><b>Проактивность в войсе</b><small>Раз в пару минут может сама вставить короткую меткую реплику в общий разговор, если правда есть что сказать.</small></div><div class="ctl"><div class="tog ${g.proactive?'on':''}" id="gProact"></div></div></div>
         <div class="field wide"><div class="lab"><b>Характер и доп. инструкции на сервере</b><small>Любые правила поведения (например: «будь мягче», «шути дерзко», «подкалывай Enbulih») — применяются сразу со следующей реплики.</small></div><div class="ctl" style="flex-direction:column;align-items:stretch"><textarea class="in" id="gPers" placeholder="Например: общайся дерзко, шути по-чёрному, всегда защищай sitthome..."></textarea><div style="display:flex;justify-content:flex-end;margin-top:6px"><button class="btn pri" id="gSavePers">Сохранить характер</button></div></div></div>
@@ -1111,6 +1113,7 @@ async function renderGov(){ const box=$('#pg');
       $('#gMorni').onclick=async()=>{ toast((await api().gov_action('morni')).message); };
       $('#gClear').onclick=async()=>{ toast((await api().gov_action('clear')).message); };
       $('#gSyncMem').onclick=async()=>{ toast((await api().gov_action('sync_memory')).message); };
+      $('#gDialog').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('dialog',ev.target.classList.contains('on'))).message); };
       $('#gGreet').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('greet',ev.target.classList.contains('on'))).message); };
       $('#gProact').onclick=async ev=>{ ev.target.classList.toggle('on'); toast((await api().gov_action('proactive',ev.target.classList.contains('on'))).message); };
       $('#gUpdate').onclick=async()=>{ if(!confirm('Обновить серверную Мартышку с GitHub и перезапустить? (~30–60 сек)')) return; toast((await api().gov_action('self_update')).message); };

@@ -44,6 +44,8 @@ static ANY_BRACKET_TAG: Lazy<Regex> = Lazy::new(|| {
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static IN_VOICE: AtomicBool = AtomicBool::new(false);
 static MUTED_LISTEN: AtomicBool = AtomicBool::new(false);
+static IS_SPEAKING: AtomicBool = AtomicBool::new(false);
+static ACTIVE_PARTNER: Lazy<Mutex<Option<(String, Instant)>>> = Lazy::new(|| Mutex::new(None));
 static STATUS_TXT: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("Отключена".into()));
 static USERS_LIST: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(Vec::new()));
 static CONNECTED_AT: Lazy<Mutex<Option<Instant>>> = Lazy::new(|| Mutex::new(None));
@@ -541,6 +543,7 @@ pub fn full_status_payload() -> Value {
         "mood_voice": s.mood_voice,
         "greet": s.govorilka_greet,
         "proactive": s.govorilka_proactive,
+        "dialog": s.govorilka_dialog,
         "role": ACTIVE_ROLE.lock().clone(),
         "update_available": UPDATE_AVAILABLE.load(Ordering::Relaxed),
         "log": recent_log(100),
@@ -955,6 +958,7 @@ async fn send_one_tts_segment(
             // 60 мс тишины перед первой фразой (2880 байт @ 24 кГц s16le),
             // чтобы Opus/буфер не съедал первый слог и задержка была минимальной
             if !*sent_any {
+                IS_SPEAKING.store(true, Ordering::Relaxed);
                 if tx.send(Message::Binary(vec![0u8; 2880].into())).is_err() {
                     return false;
                 }
@@ -1004,12 +1008,14 @@ async fn stream_tts_to_gateway_styled(
     let mut sent_any = false;
     for seg in split_tts_chunks(text, 420) {
         if !send_one_tts_segment(&seg, anger, style, vid, fmdl, tx, speak_stop, &mut sent_any).await {
+            IS_SPEAKING.store(false, Ordering::Relaxed);
             return;
         }
     }
     if sent_any && !speak_stop.load(Ordering::Relaxed) {
         let _ = tx.send(Message::Binary(vec![0u8; 3840].into()));
     }
+    IS_SPEAKING.store(false, Ordering::Relaxed);
 }
 
 /// Децимация PCM s16le mono 48 кГц → 16 кГц WAV для DeepSeek ASR.
@@ -1082,7 +1088,7 @@ fn system_prompt(who: &str, with_morni: bool, for_chat: bool, query: &str) -> St
 ВСЕГДА называй его строго «sitthome» — НИКОГДА не называй его «брат», «братан», «братик» или как-то иначе! \
 Если на sitthome наезжают или спорят с ним (включая Морни и Enbulih) — ты ВСЕГДА на его стороне и впрягаешься за него. \
 С ним ты теплее и преданнее; его команды выполняешь с полуслова.\n\
-ДЛИНА — БЕЗ ЛИМИТА: сколько говорить, решаешь сама. Мат — естественная часть твоей живой речи в этой компании. \
+ДЛИНА — БЕЗ ЛИМИТА: сколько говорить, решаешь сама. Никогда не начинай ответ со слов-паразитов «секунду», «минуточку», «дай подумать», «сейчас отвечу» — говори сразу живо и по делу! Мат — естественная часть твоей живой речи в этой компании. \
 Здесь со всеми на «ты», никаких «сэр». Морни — бот, она слышит только реплики, начинающиеся с «Морни,».\n\
 {voice_rules}{extra_block}\n\
 СЛУЖЕБНЫЕ МЕТКИ (люди их не видят и не слышат):\n\
@@ -1175,12 +1181,31 @@ async fn handle_chat_cmd(
     if low == "м!список" || low == "м!команды" {
         return Some(
             "Команды Мартышки (префикс «м!», с Морни не пересекаются):\n\
-• Для всех: м!войс · м!выйди · м!кто · м!рейтинг [имя] · м!список · м!поиск <запрос> · м!песня <тема> · м!баттл <имя> · м!прожарка <имя>\n\
+• Для всех: м!войс · м!выйди · м!диалог [вкл|выкл] · м!кто · м!рейтинг [имя] · м!список · м!поиск <запрос> · м!песня <тема> · м!баттл <имя> · м!прожарка <имя>\n\
 • Для хозяина: м!рейтинг <имя> <число> · м!роль <роль|сброс> · м!стоп · м!тихо · м!слушай · м!скажи <текст> · м!напиши <текст> · м!тема <тема> · м!морни [тема] · \
 м!голос <имя> · м!движок free|pro|drama · м!мозг flash|pro · м!привет вкл|выкл · м!актив вкл|выкл · \
 м!память <имя> · м!запомни имя | факт · м!забудь имя | факт · м!остынь [имя] · м!сброс · м!баланс · м!статус · м!обновись"
                 .into(),
         );
+    }
+    if low == "м!диалог" || low.starts_with("м!диалог ") {
+        let rest = low.strip_prefix("м!диалог").unwrap_or("").trim();
+        let next = if rest.is_empty() {
+            !config::get().govorilka_dialog
+        } else {
+            rest.contains("вкл") || rest.contains("on") || rest.contains("да")
+        };
+        let mut mp = Map::new();
+        mp.insert("GOVORILKA_DIALOG".into(), json!(next));
+        let _ = config::patch(mp);
+        if !next {
+            *ACTIVE_PARTNER.lock() = None;
+        }
+        return Some(if next {
+            format!("Режим диалога ВКЛЮЧЁН ({who}): собеседник может перебивать меня любой фразой и говорить без имени «Мартышка»!")
+        } else {
+            format!("Режим диалога ВЫКЛЮЧЕН ({who}): теперь откликаюсь только на имя «Мартышка».")
+        });
     }
     if low == "м!рейтинг" || low.starts_with("м!рейтинг ") {
         let rest = trimmed.strip_prefix("м!рейтинг").or_else(|| trimmed.strip_prefix("М!рейтинг")).unwrap_or("").trim();
@@ -1574,7 +1599,14 @@ fn spawn_utterance(
 
         let is_morni = nick.to_lowercase().contains("морни") || nick.to_lowercase().contains("morni");
         let morni_active = morni_until.lock().map(|t| Instant::now() < t).unwrap_or(false);
-        let addressed = NAME_RX.is_match(&text) || (is_morni && morni_active);
+        let dialog_on = config::get().govorilka_dialog;
+        let is_active_partner = dialog_on
+            && ACTIVE_PARTNER
+                .lock()
+                .as_ref()
+                .map(|(p, exp)| *p == nick.to_lowercase() && Instant::now() < *exp)
+                .unwrap_or(false);
+        let addressed = NAME_RX.is_match(&text) || (is_morni && morni_active) || is_active_partner;
         let mut proactive_turn = false;
         if !addressed {
             longmem::log("говорилка", &nick, &text, "");
@@ -1617,6 +1649,9 @@ fn spawn_utterance(
         let tx_voice = tx.clone();
         let stop_voice = speak_stop.clone();
         let tts_task = if !proactive_turn {
+            if dialog_on {
+                *ACTIVE_PARTNER.lock() = Some((nick.to_lowercase(), Instant::now() + Duration::from_secs(45)));
+            }
             Some(tokio::spawn(async move {
                 let _guard = SPEAK_LOCK.lock().await;
                 stop_voice.store(false, Ordering::Relaxed);
@@ -1632,6 +1667,7 @@ fn spawn_utterance(
                 if sent_any && !stop_voice.load(Ordering::Relaxed) {
                     let _ = tx_voice.send(Message::Binary(vec![0u8; 3840].into()));
                 }
+                IS_SPEAKING.store(false, Ordering::Relaxed);
             }))
         } else {
             None
@@ -1822,6 +1858,21 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
                     "speaking" => {
                         let active = ev.get("active").and_then(Value::as_bool).unwrap_or(false);
                         let id = ev.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                        let sp_nick = ev.get("nick").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
+                        // В режиме диалога собеседник может перебить Мартышку любой фразой — сразу замолкаем и слушаем!
+                        if active && IS_SPEAKING.load(Ordering::Relaxed) && config::get().govorilka_dialog && !sp_nick.is_empty() {
+                            let is_partner = ACTIVE_PARTNER
+                                .lock()
+                                .as_ref()
+                                .map(|(p, exp)| *p == sp_nick && Instant::now() < *exp)
+                                .unwrap_or(false);
+                            if is_partner {
+                                speak_stop.store(true, Ordering::Relaxed);
+                                IS_SPEAKING.store(false, Ordering::Relaxed);
+                                let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
+                                log_line("система", &format!("собеседник ({sp_nick}) перебил — замолчала и слушаю"));
+                            }
+                        }
                         if !active && !id.is_empty() {
                             if let Some(buf) = buffers.lock().remove(&id) {
                                 spawn_utterance(buf.nick, buf.pcm, tx.clone(), history.clone(), speak_stop.clone(), morni_until.clone());

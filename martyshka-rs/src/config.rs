@@ -83,6 +83,8 @@ pub struct Settings {
     pub govorilka_greet: bool,
     #[serde(default, rename = "GOVORILKA_PROACTIVE")]
     pub govorilka_proactive: bool,
+    #[serde(default = "d_true", rename = "GOVORILKA_DIALOG")]
+    pub govorilka_dialog: bool,
 }
 
 fn d_gov_model() -> String { "deepseek-flash".into() }

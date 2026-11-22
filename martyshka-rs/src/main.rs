@@ -628,6 +628,7 @@ fn run_desktop_ui() {
                                 "personality_extra": s.personality_extra,
                                 "greet": s.govorilka_greet,
                                 "proactive": s.govorilka_proactive,
+                                "dialog": s.govorilka_dialog,
                                 "remote": false,
                                 "remote_url": s.govorilka_remote_url,
                                 "log": govorilka_ws::recent_log(100),
@@ -680,9 +681,13 @@ fn run_desktop_ui() {
                                 govorilka_ws::enqueue_external_cmd(payload);
                                 json!({"ok": true, "message": "Аватарка обновлена ✓"})
                             }
-                        } else if act == "greet" || act == "proactive" {
+                        } else if act == "greet" || act == "proactive" || act == "dialog" {
                             let on = val.and_then(Value::as_bool).unwrap_or(false);
-                            let key = if act == "greet" { "GOVORILKA_GREET" } else { "GOVORILKA_PROACTIVE" };
+                            let key = match act {
+                                "greet" => "GOVORILKA_GREET",
+                                "proactive" => "GOVORILKA_PROACTIVE",
+                                _ => "GOVORILKA_DIALOG",
+                            };
                             let mut mp = Map::new();
                             mp.insert(key.into(), json!(on));
                             let _ = config::patch(mp.clone());
