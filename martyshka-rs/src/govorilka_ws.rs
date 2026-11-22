@@ -952,9 +952,10 @@ async fn send_one_tts_segment(
             pcm24.truncate(aligned_len);
             polish_voice_pcm(&mut pcm24);
 
-            // 120 мс тишины перед первой фразой, чтобы Opus/буфер не съедал первый слог
+            // 60 мс тишины перед первой фразой (2880 байт @ 24 кГц s16le),
+            // чтобы Opus/буфер не съедал первый слог и задержка была минимальной
             if !*sent_any {
-                if tx.send(Message::Binary(vec![0u8; 5760].into())).is_err() {
+                if tx.send(Message::Binary(vec![0u8; 2880].into())).is_err() {
                     return false;
                 }
                 *sent_any = true;
@@ -1092,8 +1093,8 @@ fn system_prompt(who: &str, with_morni: bool, for_chat: bool, query: &str) -> St
         if with_morni { "\nСЕЙЧАС ТЫ РАЗГОВАРИВАЕШЬ С МОРНИ: начинай реплику с «Морни,»." } else { "" }
     );
 
-    let lm = longmem::context("говорилка", 25, 5);
-    let gr = growth::context(query, 10);
+    let lm = longmem::context("говорилка", 10, 2);
+    let gr = growth::context(query, 5);
     let now = Local::now().format("%d.%m.%Y %H:%M").to_string();
     let rating = longmem::rating(who);
     let r_label = longmem::rating_label(rating);
@@ -1662,7 +1663,7 @@ fn spawn_utterance(
                 if let Some(pos) = buf.rfind(|c| matches!(c, '.' | '!' | '?' | '\n')) {
                     let head = buf[..=pos].to_string();
                     let cleaned = ANY_BRACKET_TAG.replace_all(&head, "").trim().to_string();
-                    if cleaned.chars().count() >= 14 {
+                    if cleaned.chars().count() >= 10 {
                         *buf = buf[pos + 1..].to_string();
                         let _ = tts_tx_cb.send(cleaned);
                     }
@@ -1742,7 +1743,7 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
         }
     });
 
-    let mut tick = tokio::time::interval(Duration::from_millis(200));
+    let mut tick = tokio::time::interval(Duration::from_millis(120));
     let mut hb_ticks: u32 = 0;
 
     while !stop_all.load(Ordering::Relaxed) {
@@ -1750,7 +1751,7 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
             _ = tick.tick() => {
                 poll_external_cmds();
                 hb_ticks = hb_ticks.wrapping_add(1);
-                if hb_ticks % 50 == 0 {
+                if hb_ticks % 80 == 0 {
                     write_live_state(true);
                 }
                 let mut ready = Vec::new();
@@ -1758,7 +1759,7 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
                     let mut g = buffers.lock();
                     let stale_ids: Vec<String> = g
                         .iter()
-                        .filter(|(_, b)| b.last_at.elapsed() >= Duration::from_millis(650))
+                        .filter(|(_, b)| b.last_at.elapsed() >= Duration::from_millis(420))
                         .map(|(k, _)| k.clone())
                         .collect();
                     for id in stale_ids {

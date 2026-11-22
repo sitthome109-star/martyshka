@@ -142,10 +142,23 @@ fn save_people(map: &HashMap<String, Person>) {
 }
 
 pub fn load_days() -> BTreeMap<String, String> {
-    fs::read_to_string(days_file())
+    let mut map: BTreeMap<String, String> = fs::read_to_string(days_file())
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    for v in map.values_mut() {
+        if v.contains("Рокик") || v.contains("брат") {
+            *v = v
+                .replace("братом Рокиком", "sitthome")
+                .replace("Рокиком", "sitthome")
+                .replace("Рокик", "sitthome")
+                .replace("братом", "sitthome")
+                .replace("брата", "sitthome")
+                .replace("брату", "sitthome")
+                .replace("брат", "sitthome");
+        }
+    }
+    map
 }
 
 fn save_days(map: &BTreeMap<String, String>) {

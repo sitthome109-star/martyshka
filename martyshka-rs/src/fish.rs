@@ -123,11 +123,11 @@ pub async fn speak_pcm_bytes_styled(
         "reference_id": vid,
         "format": "pcm",
         "sample_rate": SAMPLE_RATE,
-        "latency": "balanced",
+        "latency": "low",
         "normalize": true,
         "temperature": temp,
         "top_p": top_p,
-        "chunk_length": 200,
+        "chunk_length": 150,
         "prosody": {"speed": speed, "volume": 0, "normalize_loudness": true}
     });
 
