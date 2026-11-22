@@ -45,6 +45,7 @@ static RUNNING: AtomicBool = AtomicBool::new(false);
 static IN_VOICE: AtomicBool = AtomicBool::new(false);
 static MUTED_LISTEN: AtomicBool = AtomicBool::new(false);
 static IS_SPEAKING: AtomicBool = AtomicBool::new(false);
+static SPEAK_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static ACTIVE_PARTNER: Lazy<Mutex<Option<(String, Instant)>>> = Lazy::new(|| Mutex::new(None));
 static STATUS_TXT: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("Отключена".into()));
 static USERS_LIST: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(Vec::new()));
@@ -938,16 +939,20 @@ async fn send_one_tts_segment(
     style: fish::TtsStyle,
     vid: &str,
     fmdl: &str,
+    my_gen: u64,
     tx: &mpsc::UnboundedSender<Message>,
     speak_stop: &Arc<AtomicBool>,
     sent_any: &mut bool,
 ) -> bool {
-    if speak_stop.load(Ordering::Relaxed) {
+    if speak_stop.load(Ordering::Relaxed) || SPEAK_GEN.load(Ordering::SeqCst) != my_gen {
         let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
         return false;
     }
     match fish::speak_pcm_bytes_styled(seg, Some(vid), Some(fmdl), anger, style).await {
         Ok(mut pcm24) => {
+            if speak_stop.load(Ordering::Relaxed) || SPEAK_GEN.load(Ordering::SeqCst) != my_gen {
+                return false;
+            }
             let aligned_len = pcm24.len() & !1;
             if aligned_len == 0 {
                 return true;
@@ -966,7 +971,7 @@ async fn send_one_tts_segment(
             }
 
             for chunk in pcm24.chunks(3840) {
-                if speak_stop.load(Ordering::Relaxed) {
+                if speak_stop.load(Ordering::Relaxed) || SPEAK_GEN.load(Ordering::SeqCst) != my_gen {
                     let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
                     return false;
                 }
@@ -999,7 +1004,12 @@ async fn stream_tts_to_gateway_styled(
     tx: &mpsc::UnboundedSender<Message>,
     speak_stop: &Arc<AtomicBool>,
 ) {
+    let my_gen = SPEAK_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
     let _guard = SPEAK_LOCK.lock().await;
+    if SPEAK_GEN.load(Ordering::SeqCst) != my_gen {
+        return;
+    }
     speak_stop.store(false, Ordering::Relaxed);
     let s = config::get();
     let vid = if s.govorilka_voice_id.is_empty() { s.voice_id.as_str() } else { s.govorilka_voice_id.as_str() };
@@ -1007,12 +1017,12 @@ async fn stream_tts_to_gateway_styled(
 
     let mut sent_any = false;
     for seg in split_tts_chunks(text, 420) {
-        if !send_one_tts_segment(&seg, anger, style, vid, fmdl, tx, speak_stop, &mut sent_any).await {
+        if !send_one_tts_segment(&seg, anger, style, vid, fmdl, my_gen, tx, speak_stop, &mut sent_any).await {
             IS_SPEAKING.store(false, Ordering::Relaxed);
             return;
         }
     }
-    if sent_any && !speak_stop.load(Ordering::Relaxed) {
+    if sent_any && !speak_stop.load(Ordering::Relaxed) && SPEAK_GEN.load(Ordering::SeqCst) == my_gen {
         let _ = tx.send(Message::Binary(vec![0u8; 3840].into()));
     }
     IS_SPEAKING.store(false, Ordering::Relaxed);
@@ -1645,6 +1655,17 @@ fn spawn_utterance(
         let stop_gen = Arc::new(AtomicBool::new(false));
 
         // Потоковая озвучка ПО ПРЕДЛОЖЕНИЯМ: начинаем говорить, как только DeepSeek выдал первую фразу!
+        // Новый ответ атомарно сменяет поколение SPEAK_GEN — старые недосказанные очереди не накладываются и не скачут по темам!
+        let my_gen = if !proactive_turn {
+            let g = SPEAK_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+            if IS_SPEAKING.load(Ordering::Relaxed) {
+                speak_stop.store(true, Ordering::Relaxed);
+                let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
+            }
+            g
+        } else {
+            SPEAK_GEN.load(Ordering::SeqCst)
+        };
         let (tts_tx, mut tts_rx) = mpsc::unbounded_channel::<String>();
         let tx_voice = tx.clone();
         let stop_voice = speak_stop.clone();
@@ -1654,17 +1675,20 @@ fn spawn_utterance(
             }
             Some(tokio::spawn(async move {
                 let _guard = SPEAK_LOCK.lock().await;
+                if SPEAK_GEN.load(Ordering::SeqCst) != my_gen {
+                    return;
+                }
                 stop_voice.store(false, Ordering::Relaxed);
                 let s = config::get();
                 let vid = if s.govorilka_voice_id.is_empty() { s.voice_id.clone() } else { s.govorilka_voice_id.clone() };
                 let fmdl = if s.govorilka_fish_model.is_empty() { s.fish_model.clone() } else { s.govorilka_fish_model.clone() };
                 let mut sent_any = false;
                 while let Some(seg) = tts_rx.recv().await {
-                    if !send_one_tts_segment(&seg, anger, fish::TtsStyle::Normal, &vid, &fmdl, &tx_voice, &stop_voice, &mut sent_any).await {
+                    if !send_one_tts_segment(&seg, anger, fish::TtsStyle::Normal, &vid, &fmdl, my_gen, &tx_voice, &stop_voice, &mut sent_any).await {
                         break;
                     }
                 }
-                if sent_any && !stop_voice.load(Ordering::Relaxed) {
+                if sent_any && !stop_voice.load(Ordering::Relaxed) && SPEAK_GEN.load(Ordering::SeqCst) == my_gen {
                     let _ = tx_voice.send(Message::Binary(vec![0u8; 3840].into()));
                 }
                 IS_SPEAKING.store(false, Ordering::Relaxed);
@@ -1873,21 +1897,6 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
                     "speaking" => {
                         let active = ev.get("active").and_then(Value::as_bool).unwrap_or(false);
                         let id = ev.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-                        let sp_nick = ev.get("nick").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
-                        // В режиме диалога собеседник может перебить Мартышку любой фразой — сразу замолкаем и слушаем!
-                        if active && IS_SPEAKING.load(Ordering::Relaxed) && config::get().govorilka_dialog && !sp_nick.is_empty() {
-                            let is_partner = ACTIVE_PARTNER
-                                .lock()
-                                .as_ref()
-                                .map(|(p, exp)| *p == sp_nick && Instant::now() < *exp)
-                                .unwrap_or(false);
-                            if is_partner {
-                                speak_stop.store(true, Ordering::Relaxed);
-                                IS_SPEAKING.store(false, Ordering::Relaxed);
-                                let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
-                                log_line("система", &format!("собеседник ({sp_nick}) перебил — замолчала и слушаю"));
-                            }
-                        }
                         if !active && !id.is_empty() {
                             if let Some(buf) = buffers.lock().remove(&id) {
                                 spawn_utterance(buf.nick, buf.pcm, tx.clone(), history.clone(), speak_stop.clone(), morni_until.clone());
