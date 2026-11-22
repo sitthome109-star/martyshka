@@ -1676,6 +1676,8 @@ fn spawn_utterance(
         let pending = Arc::new(Mutex::new(String::new()));
         let pending_cb = pending.clone();
         let tts_tx_cb = tts_tx.clone();
+        let sent_first = Arc::new(AtomicBool::new(false));
+        let sent_first_cb = sent_first.clone();
         let can_stream = !proactive_turn;
 
         let res = deepseek::stream_chat(
@@ -1692,15 +1694,24 @@ fn spawn_utterance(
                 }
                 let mut buf = pending_cb.lock();
                 buf.push_str(chunk);
-                // Не отправляем, пока открыта квадратная скобка служебного тега [...]
                 if buf.contains('[') && !buf.contains(']') {
                     return;
                 }
-                if let Some(pos) = buf.rfind(|c| matches!(c, '.' | '!' | '?' | '\n')) {
+                // Для САМОЙ ПЕРВОЙ фразы запускаем озвучку уже на первой запятой/точке/тире (от 14 символов),
+                // чтобы Мартышка начинала отвечать Морни и друзьям почти мгновенно!
+                let is_first = !sent_first_cb.load(Ordering::Relaxed);
+                let split_pos = if is_first {
+                    buf.rfind(|c| matches!(c, '.' | '!' | '?' | '\n' | ',' | ';' | '—'))
+                } else {
+                    buf.rfind(|c| matches!(c, '.' | '!' | '?' | '\n'))
+                };
+                if let Some(pos) = split_pos {
                     let head = buf[..=pos].to_string();
                     let cleaned = ANY_BRACKET_TAG.replace_all(&head, "").trim().to_string();
-                    if cleaned.chars().count() >= 10 {
+                    let min_len = if is_first { 14 } else { 10 };
+                    if cleaned.chars().count() >= min_len {
                         *buf = buf[pos + 1..].to_string();
+                        sent_first_cb.store(true, Ordering::Relaxed);
                         let _ = tts_tx_cb.send(cleaned);
                     }
                 }
@@ -1779,7 +1790,7 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
         }
     });
 
-    let mut tick = tokio::time::interval(Duration::from_millis(120));
+    let mut tick = tokio::time::interval(Duration::from_millis(80));
     let mut hb_ticks: u32 = 0;
 
     while !stop_all.load(Ordering::Relaxed) {
@@ -1787,7 +1798,7 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
             _ = tick.tick() => {
                 poll_external_cmds();
                 hb_ticks = hb_ticks.wrapping_add(1);
-                if hb_ticks % 80 == 0 {
+                if hb_ticks % 120 == 0 {
                     write_live_state(true);
                 }
                 let mut ready = Vec::new();
@@ -1795,7 +1806,11 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
                     let mut g = buffers.lock();
                     let stale_ids: Vec<String> = g
                         .iter()
-                        .filter(|(_, b)| b.last_at.elapsed() >= Duration::from_millis(420))
+                        .filter(|(_, b)| {
+                            let low = b.nick.to_lowercase();
+                            let limit_ms = if low.contains("морни") || low.contains("morni") { 220 } else { 380 };
+                            b.last_at.elapsed() >= Duration::from_millis(limit_ms)
+                        })
                         .map(|(k, _)| k.clone())
                         .collect();
                     for id in stale_ids {
