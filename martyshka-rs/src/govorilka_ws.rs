@@ -365,14 +365,14 @@ pub fn run_show_mode(kind: &str, target: String) -> bool {
         };
         let prompt = match kind_s.as_str() {
             "song" => format!(
-                "Сочини и СПОЙ короткую, цепляющую, ритмичную песню (2 куплета + припев, с рифмой) на тему: «{}».{} \
-Используй тег {{напевает}} в начале строк и живые эмоции, чтобы Fish Audio красиво пропел!",
+                "Сочини и СПОЙ цепляющую, мелодичную песню (2 коротких куплета + припев, чёткая рифма) на тему: «{}».{} \
+ОБЯЗАТЕЛЬНО пой нараспев: начинай каждую строфу с {{напевает}} или {{мелодично}}, используй <slow> на припеве и протягивай гласные на концах фраз (например «ааа», «ооо»), чтобы звучало именно как пение, а не обычная речь!",
                 if t.is_empty() { "наша весёлая компания в Говорилке" } else { &t },
                 facts_hint
             ),
             "battle" => format!(
-                "Устрой жёсткий, смешной и ритмичный РЭП-БАТТЛ (8–12 панчлайнов в рифму, с мощным флоу!) против «{}».{} \
-Используй {{быстро, взахлёб}}, <forceful>, {{насмешливо}}.{}",
+                "Устрой жёсткий, дерзкий и качовый РЭП-БАТТЛ (8–12 коротких ритмичных строк с чёткой двойной рифмой и панчлайнами!) против «{}».{} \
+ОБЯЗАТЕЛЬНО читай в энергичном рэп-ритме: ставь {{быстро, взахлёб}} и <fast><forceful> на панчи, делай короткие рублёные фразы с восклицаниями и {{насмешливо}}!{}",
                 if t.is_empty() { "Морни" } else { &t },
                 facts_hint,
                 if is_morni { " Начни с «Морни,»!" } else { "" }
@@ -396,7 +396,12 @@ pub fn run_show_mode(kind: &str, target: String) -> bool {
             if !clean.is_empty() {
                 log_line("Мартышка (шоу)", &clean);
                 history.lock().push(json!({"role": "assistant", "content": clean.clone()}));
-                stream_tts_to_gateway(&clean, 0, &tx, &speak_stop).await;
+                let tts_style = match kind_s.as_str() {
+                    "song" => fish::TtsStyle::Sing,
+                    "battle" => fish::TtsStyle::Rap,
+                    _ => fish::TtsStyle::Normal,
+                };
+                stream_tts_to_gateway_styled(&clean, 0, tts_style, &tx, &speak_stop).await;
             }
         }
     });
@@ -872,9 +877,39 @@ fn split_tts_chunks(text: &str, max_chars: usize) -> Vec<String> {
 
 static SPEAK_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
 
+/// Плавный 4-мс fade-in / fade-out на границах PCM s16le (убирает щелчки и обрывы слогов).
+fn soft_edges_pcm(pcm: &mut [u8]) {
+    let n_samples = pcm.len() / 2;
+    let fade = 96usize.min(n_samples / 2); // 4 мс @ 24 кГц
+    for i in 0..fade {
+        let g = i as f32 / fade as f32;
+        let idx = i * 2;
+        let s = i16::from_le_bytes([pcm[idx], pcm[idx + 1]]) as f32 * g;
+        let b = (s.round() as i16).to_le_bytes();
+        pcm[idx] = b[0];
+        pcm[idx + 1] = b[1];
+
+        let ridx = (n_samples - 1 - i) * 2;
+        let rs = i16::from_le_bytes([pcm[ridx], pcm[ridx + 1]]) as f32 * g;
+        let rb = (rs.round() as i16).to_le_bytes();
+        pcm[ridx] = rb[0];
+        pcm[ridx + 1] = rb[1];
+    }
+}
+
 async fn stream_tts_to_gateway(
     text: &str,
     anger: i32,
+    tx: &mpsc::UnboundedSender<Message>,
+    speak_stop: &Arc<AtomicBool>,
+) {
+    stream_tts_to_gateway_styled(text, anger, fish::TtsStyle::Normal, tx, speak_stop).await;
+}
+
+async fn stream_tts_to_gateway_styled(
+    text: &str,
+    anger: i32,
+    style: fish::TtsStyle,
     tx: &mpsc::UnboundedSender<Message>,
     speak_stop: &Arc<AtomicBool>,
 ) {
@@ -883,17 +918,33 @@ async fn stream_tts_to_gateway(
     let s = config::get();
     let vid = if s.govorilka_voice_id.is_empty() { s.voice_id.as_str() } else { s.govorilka_voice_id.as_str() };
     let fmdl = if s.govorilka_fish_model.is_empty() { s.fish_model.as_str() } else { s.govorilka_fish_model.as_str() };
+
+    let mut sent_any = false;
     for seg in split_tts_chunks(text, 420) {
         if speak_stop.load(Ordering::Relaxed) {
             let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
-            break;
+            return;
         }
-        match fish::speak_pcm_bytes(&seg, Some(vid), Some(fmdl), anger).await {
-            Ok(pcm24) => {
-                // Выравнивание по чётным байтам (s16le) и фреймам кратным 20 мс (960 байт @ 24 кГц),
-                // чтобы Opus-кодер шлюза никогда не щёлкал и не искажал звук.
+        match fish::speak_pcm_bytes_styled(&seg, Some(vid), Some(fmdl), anger, style).await {
+            Ok(mut pcm24) => {
                 let aligned_len = pcm24.len() & !1;
-                for chunk in pcm24[..aligned_len].chunks(3840) {
+                if aligned_len == 0 {
+                    continue;
+                }
+                pcm24.truncate(aligned_len);
+                soft_edges_pcm(&mut pcm24);
+
+                // 120 мс тишины перед первой фразой (5760 байт @ 24 кГц s16le),
+                // чтобы Opus/буфер Говорилки НИКОГДА не съедал начало первого слова!
+                if !sent_any {
+                    let lead_silence = vec![0u8; 5760];
+                    if tx.send(Message::Binary(lead_silence.into())).is_err() {
+                        return;
+                    }
+                    sent_any = true;
+                }
+
+                for chunk in pcm24.chunks(3840) {
                     if speak_stop.load(Ordering::Relaxed) {
                         let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
                         return;
@@ -908,6 +959,10 @@ async fn stream_tts_to_gateway(
                 break;
             }
         }
+    }
+    // 80 мс тишины в конце, чтобы последнее слово не обрубалось
+    if sent_any && !speak_stop.load(Ordering::Relaxed) {
+        let _ = tx.send(Message::Binary(vec![0u8; 3840].into()));
     }
 }
 

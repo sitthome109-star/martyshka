@@ -36,10 +36,21 @@ pub fn key() -> String {
     config::get().fish_key.trim().to_string()
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TtsStyle {
+    Normal,
+    Sing,
+    Rap,
+}
+
 pub fn prepare_text(text: &str) -> String {
     let s = BRACKET_RX.replace_all(text, " ");
     let s = CUE_RX.replace_all(&s, "[$1]");
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+    let cleaned: String = s
+        .chars()
+        .filter(|&c| !matches!(c, '*' | '`' | '#' | '\u{FE0F}') && (c as u32) < 0x1F300)
+        .collect();
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 pub fn mood_pick(text: &str, voice_id: &str, model: &str, anger: i32) -> (String, String, String) {
@@ -64,6 +75,16 @@ pub fn mood_pick(text: &str, voice_id: &str, model: &str, anger: i32) -> (String
 }
 
 pub async fn speak_pcm_bytes(text: &str, voice_id: Option<&str>, model: Option<&str>, anger: i32) -> Result<Vec<u8>> {
+    speak_pcm_bytes_styled(text, voice_id, model, anger, TtsStyle::Normal).await
+}
+
+pub async fn speak_pcm_bytes_styled(
+    text: &str,
+    voice_id: Option<&str>,
+    model: Option<&str>,
+    anger: i32,
+    style: TtsStyle,
+) -> Result<Vec<u8>> {
     let k = key();
     if k.is_empty() {
         return Err(anyhow!("Нет ключа Fish Audio."));
@@ -78,11 +99,20 @@ pub async fn speak_pcm_bytes(text: &str, voice_id: Option<&str>, model: Option<&
         .map(str::to_string)
         .unwrap_or_else(|| if s.fish_model.is_empty() { FREE.into() } else { s.fish_model.clone() });
 
-    let (said, vid, mdl) = mood_pick(&prepare_text(text), &vid_base, &mdl_base, anger);
+    let (mut said, vid, mdl) = mood_pick(&prepare_text(text), &vid_base, &mdl_base, anger);
     if said.is_empty() {
         return Ok(Vec::new());
     }
-    let temp = if mdl == DRAMA { 0.78 } else { 0.75 };
+    let (temp, top_p, speed) = match style {
+        TtsStyle::Sing => {
+            if !SING_RX.is_match(&said) {
+                said = format!("[напевает] {said}");
+            }
+            (0.82, 0.86, 0.90)
+        }
+        TtsStyle::Rap => (0.79, 0.84, 1.16),
+        TtsStyle::Normal => (if mdl == DRAMA { 0.78 } else { 0.75 }, 0.80, 1.0),
+    };
     let body = json!({
         "text": said,
         "reference_id": vid,
@@ -91,9 +121,9 @@ pub async fn speak_pcm_bytes(text: &str, voice_id: Option<&str>, model: Option<&
         "latency": "balanced",
         "normalize": true,
         "temperature": temp,
-        "top_p": 0.80,
+        "top_p": top_p,
         "chunk_length": 200,
-        "prosody": {"speed": 1.0, "volume": 0, "normalize_loudness": true}
+        "prosody": {"speed": speed, "volume": 0, "normalize_loudness": true}
     });
 
     let resp = CLIENT
