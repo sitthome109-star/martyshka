@@ -471,7 +471,10 @@ fn run_desktop_ui() {
                     }
                     "calm_person" => {
                         let n = args.first().and_then(Value::as_str).unwrap_or("");
-                        longmem::set_anger(n, 0);
+                        if longmem::rating(n) < 0 {
+                            longmem::set_rating(n, 0);
+                        }
+                        let _ = govorilka_ws::remote_action(json!({"act": "calm", "who": n})).await;
                         json!({"ok": true})
                     }
                     "forget_lesson" => {

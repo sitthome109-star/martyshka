@@ -168,7 +168,7 @@ pub fn start_topic(topic: String, with_morni: bool) -> bool {
         } else {
             format!("Вкинь в голосовой комнате тему для обсуждения: «{t}». Скажи живо и по-свойски.")
         };
-        let sys = system_prompt("sitthome", 0, with_morni, false, &prompt);
+        let sys = system_prompt("sitthome", with_morni, false, &prompt);
         let msgs = vec![
             json!({"role": "system", "content": sys}),
             json!({"role": "user", "content": prompt}),
@@ -385,7 +385,7 @@ pub fn run_show_mode(kind: &str, target: String) -> bool {
             ),
             _ => return,
         };
-        let sys = system_prompt("sitthome", 0, is_morni, false, &prompt);
+        let sys = system_prompt("sitthome", is_morni, false, &prompt);
         let msgs = vec![
             json!({"role": "system", "content": sys}),
             json!({"role": "user", "content": prompt}),
@@ -401,6 +401,70 @@ pub fn run_show_mode(kind: &str, target: String) -> bool {
         }
     });
     true
+}
+
+static UPDATE_AVAILABLE: AtomicBool = AtomicBool::new(false);
+static NOTIFIED_RELEASE_TS: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));
+
+/// Фоновая проверка GitHub Releases каждые 3 мин: уведомляет в чат и в UI ТОЛЬКО когда
+/// готовый бинарник `martyshka-linux-x86_64` реально загружен на GitHub и новее текущего exe.
+async fn run_release_watcher(stop_all: Arc<AtomicBool>) {
+    let exe_mtime: i64 = std::env::current_exe()
+        .ok()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .user_agent("martyshka-updater")
+        .build()
+    else {
+        return;
+    };
+    tokio::time::sleep(Duration::from_secs(20)).await;
+    while !stop_all.load(Ordering::Relaxed) {
+        if let Ok(resp) = client
+            .get("https://api.github.com/repos/sitthome109-star/martyshka/releases/latest")
+            .send()
+            .await
+        {
+            if let Ok(v) = resp.json::<Value>().await {
+                if let Some(assets) = v.get("assets").and_then(Value::as_array) {
+                    if let Some(bin) = assets.iter().find(|a| a.get("name").and_then(Value::as_str) == Some("martyshka-linux-x86_64")) {
+                        let upd = bin.get("updated_at").and_then(Value::as_str).unwrap_or("");
+                        let size = bin.get("size").and_then(Value::as_u64).unwrap_or(0);
+                        if size > 1_000_000 {
+                            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(upd) {
+                                // Считаем обновлением только если ассет загружен минимум на 90 с позже нашего exe
+                                if exe_mtime > 0 && dt.timestamp() > exe_mtime + 90 {
+                                    UPDATE_AVAILABLE.store(true, Ordering::Relaxed);
+                                    let should_notify = {
+                                        let mut last = NOTIFIED_RELEASE_TS.lock();
+                                        if *last != upd {
+                                            *last = upd.to_string();
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    };
+                                    if should_notify {
+                                        log_line("система", &format!("Найдено новое готовое обновление на GitHub ({upd})"));
+                                        send_chat_text(
+                                            "общий",
+                                            "✨ Вышло и загрузилось новое обновление Мартышки на GitHub! Нажми «🔄 Обновить сервер» в приложении или напиши м!обновись.",
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(180)).await;
+    }
 }
 
 pub fn trigger_self_update(notify_channel: Option<String>) -> Value {
@@ -473,6 +537,7 @@ pub fn full_status_payload() -> Value {
         "greet": s.govorilka_greet,
         "proactive": s.govorilka_proactive,
         "role": ACTIVE_ROLE.lock().clone(),
+        "update_available": UPDATE_AVAILABLE.load(Ordering::Relaxed),
         "log": recent_log(100),
         "people": people,
         "lessons": growth::items(),
@@ -546,13 +611,15 @@ pub fn apply_control_action(v: &Value) -> Value {
         "calm" => {
             let who = v.get("who").and_then(Value::as_str).unwrap_or("").trim();
             if who.is_empty() {
-                for (name, _) in longmem::load_people() {
-                    longmem::set_anger(&name, 0);
+                for (name, p) in longmem::load_people() {
+                    if p.rating < 0 {
+                        longmem::set_rating(&name, 0);
+                    }
                 }
-            } else {
-                longmem::set_anger(who, 0);
+            } else if longmem::rating(who) < 0 {
+                longmem::set_rating(who, 0);
             }
-            json!({"ok": true, "message": "Злость обнулена ✓"})
+            json!({"ok": true, "message": "Отрицательный рейтинг обнулён до 0 ✓"})
         }
         "set_rating" => {
             let who = v.get("who").and_then(Value::as_str).unwrap_or("").trim();
@@ -873,16 +940,19 @@ pub(crate) fn pcm48k_to_wav16k(pcm48: &[u8]) -> Vec<u8> {
     wav
 }
 
-fn system_prompt(who: &str, anger: i32, with_morni: bool, for_chat: bool, query: &str) -> String {
+fn anger_from_rating(r: i32) -> i32 {
+    match r {
+        ..=-80 => 5,
+        -79..=-60 => 4,
+        -59..=-40 => 3,
+        -39..=-20 => 2,
+        -19..=-1 => 1,
+        _ => 0,
+    }
+}
+
+fn system_prompt(who: &str, with_morni: bool, for_chat: bool, query: &str) -> String {
     let s = config::get();
-    let mood = match anger.clamp(0, 5) {
-        0 => "Ты в нормальном настроении: болтаешь по-свойски, материшься по-дружески, к месту.",
-        1 => "Ты слегка раздражена: суше, с подколкой.",
-        2 => "Ты раздражена: язвишь и подкалываешь в ответ.",
-        3 => "Ты злишься: грубишь в ответ с матом, жёстко высмеиваешь.",
-        4 => "Ты в бешенстве: кроешь матом, остроумно и зло унижаешь в ответ.",
-        _ => "Ты в ярости: максимально жёстко, отборным матом (границы — те же).",
-    };
     let who_label = if longmem::is_owner(who) {
         "sitthome (ТВОЙ ХОЗЯИН и создатель)".to_string()
     } else {
@@ -914,10 +984,9 @@ fn system_prompt(who: &str, anger: i32, with_morni: bool, for_chat: bool, query:
 ДЛИНА — БЕЗ ЛИМИТА: сколько говорить, решаешь сама. Мат — естественная часть твоей живой речи в этой компании. \
 Здесь со всеми на «ты», никаких «сэр». Морни — бот, она слышит только реплики, начинающиеся с «Морни,».\n\
 {voice_rules}{extra_block}\n\
-СЛУЖЕБНЫЕ МЕТКИ (люди их не видят и не слышат): в начале ответа [ТОН: 0..5] — злость на говорящего; \
-СОЦИАЛЬНЫЙ РЕЙТИНГ (-100..+100, где 0 = безразлично): в конце ответа оцени поведение собеседника тегом [РЕЙТИНГ: +N] или [РЕЙТИНГ: -N] (от -15 до +15 за реплику; за юмор/комплименты/помощь — плюс, за грубость/наезды/тупость — минус, если нейтрально — не ставь или 0). ВСЕГДА подстраивай манеру общения под текущий социальный рейтинг собеседника! \
-АКТИВНО ЗАПОМИНАЙ ЛЮДЕЙ: каждый раз, когда узнаёшь о собеседнике (Enbulih, sitthome, Морни или любом другом) новый факт, привычку, игру, шутку, вкус или событие — ОБЯЗАТЕЛЬНО пиши в конце [ЗАПОМНИ О: имя | короткий факт]; \
-поняла полезный урок на будущее — [УРОК: текст].\n\
+СЛУЖЕБНЫЕ МЕТКИ (люди их не видят и не слышат):\n\
+- СОЦИАЛЬНЫЙ РЕЙТИНГ (-100..+100, где 0 = безразлично; минус = раздражение/злость, плюс = симпатия/любовь): в конце ответа оцени поведение собеседника тегом [РЕЙТИНГ: +N] или [РЕЙТИНГ: -N] (от -15 до +15 за реплику; за юмор/комплименты/помощь — плюс, за грубость/наезды/тупость — минус, если нейтрально — не ставь или 0). ВСЕГДА подстраивай злость, теплоту и манеру общения строго под текущий социальный рейтинг собеседника!\n\
+- АКТИВНО ЗАПОМИНАЙ ЛЮДЕЙ: каждый раз, когда узнаёшь о собеседнике (Enbulih, sitthome, Морни или любом другом) новый факт, привычку, игру, шутку, вкус или событие — ОБЯЗАТЕЛЬНО пиши в конце [ЗАПОМНИ О: имя | короткий факт]; поняла полезный урок — [УРОК: текст].\n\
 ГРАНИЦЫ: без угроз и призывов к насилию/самоповреждению, без оскорблений по национальности, религии, полу, ориентации, внешности, здоровью, родственникам, без чужих личных данных.{}",
         s.name,
         if with_morni { "\nСЕЙЧАС ТЫ РАЗГОВАРИВАЕШЬ С МОРНИ: начинай реплику с «Морни,»." } else { "" }
@@ -929,16 +998,18 @@ fn system_prompt(who: &str, anger: i32, with_morni: bool, for_chat: bool, query:
     let rating = longmem::rating(who);
     let r_label = longmem::rating_label(rating);
     let r_behavior = match rating {
-        -100..=-60 => "Относись к нему с презрением, максимально холодно, язвительно и резко (в рамках границ).",
-        -59..=-25 => "Относись к нему с неприязнью: сухо, с колкими подколами и сарказмом.",
-        -24..=-1 => "Относись к нему слегка прохладно и скептически, можешь подтрунивать.",
-        0 => "Относись к нему нейтрально и безразлично: спокойно, без особой теплоты и без вражды.",
-        1..=24 => "Относись к нему дружелюбно и легко.",
-        25..=59 => "Относись к нему очень тепло, по-свойски, шути и поддерживай.",
-        _ => "Он твой любимчик: общайся максимально тепло, ласково, с заботой и всегда будь на его стороне!",
+        -100..=-80 => "Ты в ярости на него: максимально жёстко, с отборным матом и презрением (в рамках границ).",
+        -79..=-60 => "Ты в бешенстве на него: кроешь матом, зло и остроумно высмеиваешь в ответ.",
+        -59..=-40 => "Ты злишься на него: грубишь с матом, жёстко подкалываешь.",
+        -39..=-20 => "Ты раздражена им: язвишь, саркастично и холодно отвечаешь.",
+        -19..=-1 => "Ты слегка недовольна им: суше обычного, с лёгкой подколкой.",
+        0 => "Он тебе безразличен: общаешься спокойно и нейтрально, без особой теплоты и без вражды.",
+        1..=24 => "Он тебе симпатичен: общаешься дружелюбно, легко и по-свойски.",
+        25..=59 => "Он свой человек: общаешься очень тепло, весело, шутишь и поддерживаешь.",
+        _ => "Он твой любимчик: общаешься максимально тепло, ласково, с заботой и всегда на его стороне!",
     };
     format!(
-        "{base}{}\n{lm}\n\n{gr}\n\nВремя: {now}.\nГоворит: {who_label}.\nСоциальный рейтинг говорящего: {rating:+}/100 ({r_label}). {r_behavior}\nТвоя злость на него: {anger}/5. {mood}",
+        "{base}{}\n{lm}\n\n{gr}\n\nВремя: {now}.\nГоворит: {who_label}.\nСоциальный рейтинг говорящего: {rating:+}/100 ({r_label}). {r_behavior}",
         deepseek::DYNAMIC_MARK
     )
 }
@@ -1067,7 +1138,7 @@ async fn handle_chat_cmd(
             if web.is_empty() {
                 return Some(format!("Ничего свежего по «{q}» не нашлось."));
             }
-            let sys = system_prompt(who, 0, false, true, &q);
+            let sys = system_prompt(who, false, true, &q);
             let msgs = vec![
                 json!({"role": "system", "content": sys}),
                 json!({"role": "user", "content": format!("Коротко и понятно ответь на запрос «{q}» по этим свежим данным из интернета:\n- {web}")}),
@@ -1249,7 +1320,7 @@ async fn handle_chat_cmd(
             } else {
                 p.facts.iter().take(6).cloned().collect::<Vec<_>>().join("; ")
             };
-            return Some(format!("Про «{norm}» (злость {}/5, реплик {}): {facts}", longmem::anger(&norm), p.count));
+            return Some(format!("Про «{norm}» (рейтинг {:+}/100 — {}, реплик {}): {facts}", p.rating, longmem::rating_label(p.rating), p.count));
         }
         return Some(format!("Про «{target}» пока ничего не записано."));
     }
@@ -1278,13 +1349,17 @@ async fn handle_chat_cmd(
     if low == "м!остынь" || low.starts_with("м!остынь ") {
         let target = trimmed.strip_prefix("м!остынь").or_else(|| trimmed.strip_prefix("М!остынь")).unwrap_or("").trim();
         if target.is_empty() {
-            for (name, _) in longmem::load_people() {
-                longmem::set_anger(&name, 0);
+            for (name, p) in longmem::load_people() {
+                if p.rating < 0 {
+                    longmem::set_rating(&name, 0);
+                }
             }
-            return Some("Всё, остыла — злость на всех обнулена.".into());
+            return Some("Всё, остыла — отрицательный рейтинг у всех сброшен до 0.".into());
         }
-        longmem::set_anger(target, 0);
-        return Some(format!("Остыла, злость на «{}» теперь 0/5.", longmem::norm(target)));
+        if longmem::rating(target) < 0 {
+            longmem::set_rating(target, 0);
+        }
+        return Some(format!("Остыла, рейтинг «{}» теперь {:+}/100.", longmem::norm(target), longmem::rating(target)));
     }
     None
 }
@@ -1300,6 +1375,7 @@ pub async fn run_forever(stop_all: Arc<AtomicBool>) {
         return;
     }
     tokio::spawn(run_admin_http());
+    tokio::spawn(run_release_watcher(stop_all.clone()));
     *STATUS_TXT.lock() = "Подключаюсь к Говорилке…".into();
     log_line("система", "Запуск прямого бота Говорилки (24/7)");
     while !stop_all.load(Ordering::Relaxed) {
@@ -1418,8 +1494,8 @@ fn spawn_utterance(
             UNADDRESSED_COUNT.store(0, Ordering::Relaxed);
         }
 
-        let anger = longmem::anger(&nick);
-        let mut sys = system_prompt(&nick, anger, is_morni, false, &text);
+        let anger = anger_from_rating(longmem::rating(&nick));
+        let mut sys = system_prompt(&nick, is_morni, false, &text);
         if proactive_turn {
             sys.push_str("\nК тебе сейчас напрямую не обращались. Если есть короткая, меткая, смешная реплика в тему — скажи её; если добавить особо нечего — ответь строго [МОЛЧУ].");
         } else if SEARCH_RX.is_match(&text) {
@@ -1597,8 +1673,8 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
                                 let tx_g = tx.clone();
                                 let stop_g = speak_stop.clone();
                                 tokio::spawn(async move {
-                                    let anger = longmem::anger(&joined);
-                                    let sys = system_prompt(&joined, anger, false, false, &joined);
+                                    let anger = anger_from_rating(longmem::rating(&joined));
+                                    let sys = system_prompt(&joined, false, false, &joined);
                                     let msgs = vec![
                                         json!({"role": "system", "content": sys}),
                                         json!({"role": "user", "content": format!("{joined} только что зашёл в голосовой канал. Поздоровайся коротко и живо по имени (можно с лёгкой подколкой или вспомнить факт о нём, 1–2 предложения).")}),
@@ -1637,8 +1713,7 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
                             let tx_c = tx.clone();
                             let hist_c = history.clone();
                             tokio::spawn(async move {
-                                let anger = longmem::anger(&who);
-                                let sys = system_prompt(&who, anger, false, true, &text);
+                                let sys = system_prompt(&who, false, true, &text);
                                 let mut msgs = vec![json!({"role": "system", "content": sys})];
                                 msgs.extend(hist_c.lock().clone());
                                 msgs.push(json!({"role": "user", "content": format!("{who} (в чат #{channel}): {text}")}));
