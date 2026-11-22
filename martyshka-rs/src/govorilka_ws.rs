@@ -877,23 +877,104 @@ fn split_tts_chunks(text: &str, max_chars: usize) -> Vec<String> {
 
 static SPEAK_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
 
-/// Плавный 4-мс fade-in / fade-out на границах PCM s16le (убирает щелчки и обрывы слогов).
-fn soft_edges_pcm(pcm: &mut [u8]) {
-    let n_samples = pcm.len() / 2;
-    let fade = 96usize.min(n_samples / 2); // 4 мс @ 24 кГц
-    for i in 0..fade {
-        let g = i as f32 / fade as f32;
-        let idx = i * 2;
-        let s = i16::from_le_bytes([pcm[idx], pcm[idx + 1]]) as f32 * g;
-        let b = (s.round() as i16).to_le_bytes();
-        pcm[idx] = b[0];
-        pcm[idx + 1] = b[1];
+/// Студийная обработка 24 кГц PCM: убирает низкочастотный гул (HPF ~75 Гц),
+/// мягко выравнивает громкость (soft-knee нормализация без клиппинга) и сглаживает края (4 мс fade).
+fn polish_voice_pcm(pcm: &mut [u8]) {
+    let n = pcm.len() / 2;
+    if n < 16 {
+        return;
+    }
+    let mut samples: Vec<f32> = pcm
+        .chunks_exact(2)
+        .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
+        .collect();
 
-        let ridx = (n_samples - 1 - i) * 2;
-        let rs = i16::from_le_bytes([pcm[ridx], pcm[ridx + 1]]) as f32 * g;
-        let rb = (rs.round() as i16).to_le_bytes();
-        pcm[ridx] = rb[0];
-        pcm[ridx + 1] = rb[1];
+    // 1. 1-полюсный ФВЧ ~75 Гц (убирает бубнёж и DC-смещение перед Opus)
+    let alpha = 0.9805_f32;
+    let mut prev_x = 0.0_f32;
+    let mut prev_y = 0.0_f32;
+    let mut sum_sq = 0.0_f64;
+    for s in &mut samples {
+        let x = *s;
+        let y = alpha * (prev_y + x - prev_x);
+        prev_x = x;
+        prev_y = y;
+        *s = y;
+        sum_sq += (y as f64) * (y as f64);
+    }
+
+    // 2. Мягкое выравнивание громкости (чтобы и шёпот, и крик звучали чисто и без перегруза)
+    let rms = (sum_sq / n as f64).sqrt() as f32;
+    let gain = if rms > 0.008 { (0.21 / rms).clamp(0.65, 1.85) } else { 1.0 };
+
+    let fade = 96usize.min(n / 2); // 4 мс @ 24 кГц
+    for (i, &s) in samples.iter().enumerate() {
+        let mut v = s * gain;
+        // Soft-clip tanh для защиты от хрипа на пиках
+        if v.abs() > 0.85 {
+            v = v.signum() * (0.85 + 0.13 * ((v.abs() - 0.85) / 0.15).tanh());
+        }
+        let env = if i < fade {
+            i as f32 / fade as f32
+        } else if i >= n - fade {
+            (n - 1 - i) as f32 / fade as f32
+        } else {
+            1.0
+        };
+        let q = (v * env * 32767.0).clamp(-32767.0, 32767.0).round() as i16;
+        let b = q.to_le_bytes();
+        pcm[i * 2] = b[0];
+        pcm[i * 2 + 1] = b[1];
+    }
+}
+
+/// Отправить один готовый сегмент текста в Fish Audio → DSP → botgw (без захвата SPEAK_LOCK).
+async fn send_one_tts_segment(
+    seg: &str,
+    anger: i32,
+    style: fish::TtsStyle,
+    vid: &str,
+    fmdl: &str,
+    tx: &mpsc::UnboundedSender<Message>,
+    speak_stop: &Arc<AtomicBool>,
+    sent_any: &mut bool,
+) -> bool {
+    if speak_stop.load(Ordering::Relaxed) {
+        let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
+        return false;
+    }
+    match fish::speak_pcm_bytes_styled(seg, Some(vid), Some(fmdl), anger, style).await {
+        Ok(mut pcm24) => {
+            let aligned_len = pcm24.len() & !1;
+            if aligned_len == 0 {
+                return true;
+            }
+            pcm24.truncate(aligned_len);
+            polish_voice_pcm(&mut pcm24);
+
+            // 120 мс тишины перед первой фразой, чтобы Opus/буфер не съедал первый слог
+            if !*sent_any {
+                if tx.send(Message::Binary(vec![0u8; 5760].into())).is_err() {
+                    return false;
+                }
+                *sent_any = true;
+            }
+
+            for chunk in pcm24.chunks(3840) {
+                if speak_stop.load(Ordering::Relaxed) {
+                    let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
+                    return false;
+                }
+                if tx.send(Message::Binary(chunk.to_vec().into())).is_err() {
+                    return false;
+                }
+            }
+            true
+        }
+        Err(e) => {
+            log_line("ошибка", &format!("Fish Audio: {e}"));
+            false
+        }
     }
 }
 
@@ -921,46 +1002,10 @@ async fn stream_tts_to_gateway_styled(
 
     let mut sent_any = false;
     for seg in split_tts_chunks(text, 420) {
-        if speak_stop.load(Ordering::Relaxed) {
-            let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
+        if !send_one_tts_segment(&seg, anger, style, vid, fmdl, tx, speak_stop, &mut sent_any).await {
             return;
         }
-        match fish::speak_pcm_bytes_styled(&seg, Some(vid), Some(fmdl), anger, style).await {
-            Ok(mut pcm24) => {
-                let aligned_len = pcm24.len() & !1;
-                if aligned_len == 0 {
-                    continue;
-                }
-                pcm24.truncate(aligned_len);
-                soft_edges_pcm(&mut pcm24);
-
-                // 120 мс тишины перед первой фразой (5760 байт @ 24 кГц s16le),
-                // чтобы Opus/буфер Говорилки НИКОГДА не съедал начало первого слова!
-                if !sent_any {
-                    let lead_silence = vec![0u8; 5760];
-                    if tx.send(Message::Binary(lead_silence.into())).is_err() {
-                        return;
-                    }
-                    sent_any = true;
-                }
-
-                for chunk in pcm24.chunks(3840) {
-                    if speak_stop.load(Ordering::Relaxed) {
-                        let _ = tx.send(Message::Text(json!({"type": "audio_clear"}).to_string().into()));
-                        return;
-                    }
-                    if tx.send(Message::Binary(chunk.to_vec().into())).is_err() {
-                        return;
-                    }
-                }
-            }
-            Err(e) => {
-                log_line("ошибка", &format!("Fish Audio: {e}"));
-                break;
-            }
-        }
     }
-    // 80 мс тишины в конце, чтобы последнее слово не обрубалось
     if sent_any && !speak_stop.load(Ordering::Relaxed) {
         let _ = tx.send(Message::Binary(vec![0u8; 3840].into()));
     }
@@ -1565,7 +1610,77 @@ fn spawn_utterance(
 
         let model = config::get().govorilka_model;
         let stop_gen = Arc::new(AtomicBool::new(false));
-        let res = deepseek::stream_chat(msgs, &model, false, "low", 8000, None, stop_gen, |_| {}, |_| {}).await;
+
+        // Потоковая озвучка ПО ПРЕДЛОЖЕНИЯМ: начинаем говорить, как только DeepSeek выдал первую фразу!
+        let (tts_tx, mut tts_rx) = mpsc::unbounded_channel::<String>();
+        let tx_voice = tx.clone();
+        let stop_voice = speak_stop.clone();
+        let tts_task = if !proactive_turn {
+            Some(tokio::spawn(async move {
+                let _guard = SPEAK_LOCK.lock().await;
+                stop_voice.store(false, Ordering::Relaxed);
+                let s = config::get();
+                let vid = if s.govorilka_voice_id.is_empty() { s.voice_id.clone() } else { s.govorilka_voice_id.clone() };
+                let fmdl = if s.govorilka_fish_model.is_empty() { s.fish_model.clone() } else { s.govorilka_fish_model.clone() };
+                let mut sent_any = false;
+                while let Some(seg) = tts_rx.recv().await {
+                    if !send_one_tts_segment(&seg, anger, fish::TtsStyle::Normal, &vid, &fmdl, &tx_voice, &stop_voice, &mut sent_any).await {
+                        break;
+                    }
+                }
+                if sent_any && !stop_voice.load(Ordering::Relaxed) {
+                    let _ = tx_voice.send(Message::Binary(vec![0u8; 3840].into()));
+                }
+            }))
+        } else {
+            None
+        };
+
+        let pending = Arc::new(Mutex::new(String::new()));
+        let pending_cb = pending.clone();
+        let tts_tx_cb = tts_tx.clone();
+        let can_stream = !proactive_turn;
+
+        let res = deepseek::stream_chat(
+            msgs,
+            &model,
+            false,
+            "low",
+            8000,
+            None,
+            stop_gen,
+            move |chunk| {
+                if !can_stream {
+                    return;
+                }
+                let mut buf = pending_cb.lock();
+                buf.push_str(chunk);
+                // Не отправляем, пока открыта квадратная скобка служебного тега [...]
+                if buf.contains('[') && !buf.contains(']') {
+                    return;
+                }
+                if let Some(pos) = buf.rfind(|c| matches!(c, '.' | '!' | '?' | '\n')) {
+                    let head = buf[..=pos].to_string();
+                    let cleaned = ANY_BRACKET_TAG.replace_all(&head, "").trim().to_string();
+                    if cleaned.chars().count() >= 14 {
+                        *buf = buf[pos + 1..].to_string();
+                        let _ = tts_tx_cb.send(cleaned);
+                    }
+                }
+            },
+            |_| {},
+        )
+        .await;
+
+        let tail = {
+            let rem = pending.lock().clone();
+            ANY_BRACKET_TAG.replace_all(&rem, "").trim().to_string()
+        };
+        if can_stream && !tail.is_empty() {
+            let _ = tts_tx.send(tail);
+        }
+        drop(tts_tx);
+
         let Ok(r) = res else { return };
         if proactive_turn && r.text.to_uppercase().contains("[МОЛЧУ]") {
             return;
@@ -1578,7 +1693,11 @@ fn spawn_utterance(
         longmem::log("говорилка", &nick, &text, &clean);
         history.lock().push(json!({"role": "assistant", "content": clean.clone()}));
 
-        stream_tts_to_gateway(&clean, anger, &tx, &speak_stop).await;
+        if let Some(t) = tts_task {
+            let _ = t.await;
+        } else {
+            stream_tts_to_gateway(&clean, anger, &tx, &speak_stop).await;
+        }
     });
 }
 
@@ -1623,7 +1742,7 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
         }
     });
 
-    let mut tick = tokio::time::interval(Duration::from_millis(500));
+    let mut tick = tokio::time::interval(Duration::from_millis(200));
     let mut hb_ticks: u32 = 0;
 
     while !stop_all.load(Ordering::Relaxed) {
@@ -1631,7 +1750,7 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
             _ = tick.tick() => {
                 poll_external_cmds();
                 hb_ticks = hb_ticks.wrapping_add(1);
-                if hb_ticks % 20 == 0 {
+                if hb_ticks % 50 == 0 {
                     write_live_state(true);
                 }
                 let mut ready = Vec::new();
@@ -1639,7 +1758,7 @@ async fn run_session(url: &str, token: &str, stop_all: Arc<AtomicBool>) -> anyho
                     let mut g = buffers.lock();
                     let stale_ids: Vec<String> = g
                         .iter()
-                        .filter(|(_, b)| b.last_at.elapsed() >= Duration::from_millis(1100))
+                        .filter(|(_, b)| b.last_at.elapsed() >= Duration::from_millis(650))
                         .map(|(k, _)| k.clone())
                         .collect();
                     for id in stale_ids {

@@ -50,7 +50,12 @@ pub fn prepare_text(text: &str) -> String {
         .chars()
         .filter(|&c| !matches!(c, '*' | '`' | '#' | '\u{FE0F}') && (c as u32) < 0x1F300)
         .collect();
-    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+    cleaned
+        .replace(" — ", ", ")
+        .replace('—', ", ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub fn mood_pick(text: &str, voice_id: &str, model: &str, anger: i32) -> (String, String, String) {
