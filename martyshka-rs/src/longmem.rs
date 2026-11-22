@@ -31,6 +31,8 @@ pub struct Person {
     pub where_seen: String,
     #[serde(default, rename = "реплик")]
     pub count: u64,
+    #[serde(default, rename = "рейтинг")]
+    pub rating: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +105,7 @@ pub fn load_people() -> HashMap<String, Person> {
         if p.last_seen > e.last_seen { e.last_seen = p.last_seen; e.where_seen = p.where_seen; }
         if e.first_seen.is_empty() || (!p.first_seen.is_empty() && p.first_seen < e.first_seen) { e.first_seen = p.first_seen; }
         if p.anger_since >= e.anger_since { e.anger = p.anger; e.anger_since = p.anger_since; }
+        if p.rating != 0 { e.rating = p.rating.clamp(-100, 100); }
     }
     out
 }
@@ -159,6 +162,7 @@ pub fn merge_people(incoming: HashMap<String, Person>) -> HashMap<String, Person
             }
         }
         entry.count = entry.count.max(inc.count);
+        let inc_newer = inc.last_seen >= entry.last_seen;
         if inc.last_seen > entry.last_seen {
             entry.last_seen = inc.last_seen;
             entry.where_seen = inc.where_seen;
@@ -170,9 +174,57 @@ pub fn merge_people(incoming: HashMap<String, Person>) -> HashMap<String, Person
             entry.anger = inc.anger;
             entry.anger_since = inc.anger_since;
         }
+        if inc.rating != 0 && (entry.rating == 0 || inc_newer) {
+            entry.rating = inc.rating.clamp(-100, 100);
+        }
     }
     save_people(&cur);
     cur
+}
+
+pub fn rating(name: &str) -> i32 {
+    load_people()
+        .get(&norm(name))
+        .map(|p| p.rating.clamp(-100, 100))
+        .unwrap_or(0)
+}
+
+pub fn set_rating(name: &str, value: i32) -> i32 {
+    let key = norm(name);
+    let val = value.clamp(-100, 100);
+    let _g = LOCK.lock();
+    let mut ps = load_people();
+    let p = ps.entry(key).or_default();
+    p.rating = val;
+    if p.last_seen.is_empty() {
+        p.last_seen = now_iso_min();
+    }
+    save_people(&ps);
+    val
+}
+
+pub fn add_rating(name: &str, delta: i32) -> i32 {
+    let key = norm(name);
+    let _g = LOCK.lock();
+    let mut ps = load_people();
+    let p = ps.entry(key).or_default();
+    let next = (p.rating + delta).clamp(-100, 100);
+    p.rating = next;
+    p.last_seen = now_iso_min();
+    save_people(&ps);
+    next
+}
+
+pub fn rating_label(r: i32) -> &'static str {
+    match r.clamp(-100, 100) {
+        -100..=-60 => "враг народа (презираешь)",
+        -59..=-25 => "недолюбливаешь (холодная и язвительная)",
+        -24..=-1 => "слегка недовольна (прохладная)",
+        0 => "безразличная (нейтральная)",
+        1..=24 => "симпатия (дружелюбная)",
+        25..=59 => "свой человек (тёплая и весёлая)",
+        _ => "любимчик (обожаешь и всегда поддерживаешь)",
+    }
 }
 
 /// Двустороннее объединение сводок дней.
@@ -344,6 +396,17 @@ pub fn context(source: &str, today_lines: usize, n_days: usize) -> String {
         if !owner.facts.is_empty() {
             parts.push(format!("Что ты знаешь о хозяине (sitthome): {}", owner.facts.join("; ")));
         }
+    }
+    let rated: Vec<String> = ps
+        .iter()
+        .filter(|(_, p)| p.rating != 0 || !p.facts.is_empty())
+        .map(|(n, p)| {
+            let f = if p.facts.is_empty() { String::new() } else { format!(" ({})", p.facts.iter().take(3).cloned().collect::<Vec<_>>().join("; ")) };
+            format!("{n}: рейтинг {:+}/100 [{}]{f}", p.rating, rating_label(p.rating))
+        })
+        .collect();
+    if !rated.is_empty() {
+        parts.push(format!("Социальный рейтинг и люди:\n{}", rated.join("\n")));
     }
     parts.join("\n\n")
 }

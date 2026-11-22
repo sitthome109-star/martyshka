@@ -450,11 +450,18 @@ fn run_desktop_ui() {
                         let _ = govorilka_ws::sync_memory_with_remote().await;
                         let people: Vec<Value> = longmem::load_people()
                             .into_iter()
-                            .map(|(name, p)| json!({"name": name, "facts": p.facts, "anger": longmem::anger(&name), "last": p.last_seen, "count": p.count}))
+                            .map(|(name, p)| json!({"name": name, "facts": p.facts, "anger": longmem::anger(&name), "rating": p.rating, "rating_label": longmem::rating_label(p.rating), "last": p.last_seen, "count": p.count}))
                             .collect();
                         let days: Vec<Value> = longmem::load_days().into_iter().rev().map(|(d, t)| json!([d, t])).collect();
                         let lessons = growth::items();
                         json!({"people": people, "days": days, "facts": [], "lessons": lessons})
+                    }
+                    "set_person_rating" => {
+                        let n = args.first().and_then(Value::as_str).unwrap_or("");
+                        let v = args.get(1).and_then(Value::as_i64).unwrap_or(0) as i32;
+                        let r = longmem::set_rating(n, v);
+                        let _ = govorilka_ws::remote_action(json!({"act": "set_rating", "who": n, "val": r})).await;
+                        json!({"ok": true, "rating": r})
                     }
                     "forget_person_fact" => {
                         let n = args.first().and_then(Value::as_str).unwrap_or("");
@@ -810,7 +817,14 @@ mod tests {
 
     #[test]
     fn test_govorilka_clean_reply_tags() {
-        let out = govorilka_ws::clean_reply_tags("[ТОН: 0] {весело} Привет, sitthome! [МОЛЧУ]", "sitthome");
+        let out = govorilka_ws::clean_reply_tags("[ТОН: 0] {весело} Привет, sitthome! [РЕЙТИНГ: +5] [МОЛЧУ]", "sitthome");
         assert_eq!(out, "{весело} Привет, sitthome!");
+    }
+
+    #[test]
+    fn test_social_rating_labels() {
+        assert!(longmem::rating_label(0).contains("безразлич"));
+        assert!(longmem::rating_label(80).contains("любимчик"));
+        assert!(longmem::rating_label(-80).contains("враг"));
     }
 }

@@ -33,11 +33,12 @@ static SEARCH_RX: Lazy<Regex> = Lazy::new(|| {
 static HTML_TAG_RX: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").unwrap());
 static ACTIVE_ROLE: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));
 static TON_RX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\[\s*ТОН\s*:\s*(\d)\s*\]").unwrap());
+static RATING_RX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\[\s*РЕЙТИНГ\s*:\s*([+-]?\d+)\s*\]").unwrap());
 static MEM_RX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\[\s*ЗАПОМНИ(?:\s+О)?\s*[:\-]?\s*([^|\]:]+?)\s*(?:\||:)\s*([^\]]+)\]").unwrap()
 });
 static ANY_BRACKET_TAG: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\[\s*(?:ТОН|КТО|ЗАПОМНИ(?:\s+О)?|УРОК|ОПЫТ|ИНТЕРЕС|МОЛЧУ)[^\]]*\]").unwrap()
+    Regex::new(r"(?i)\[\s*(?:ТОН|РЕЙТИНГ|КТО|ЗАПОМНИ(?:\s+О)?|УРОК|ОПЫТ|ИНТЕРЕС|МОЛЧУ)[^\]]*\]").unwrap()
 });
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -454,7 +455,7 @@ pub fn full_status_payload() -> Value {
     let s = config::get();
     let people: Vec<Value> = longmem::load_people()
         .into_iter()
-        .map(|(name, p)| json!({"name": name, "facts": p.facts, "anger": longmem::anger(&name), "last": p.last_seen, "count": p.count}))
+        .map(|(name, p)| json!({"name": name, "facts": p.facts, "anger": longmem::anger(&name), "rating": p.rating, "last": p.last_seen, "count": p.count}))
         .collect();
     json!({
         "running": is_running(),
@@ -552,6 +553,17 @@ pub fn apply_control_action(v: &Value) -> Value {
                 longmem::set_anger(who, 0);
             }
             json!({"ok": true, "message": "Злость обнулена ✓"})
+        }
+        "set_rating" => {
+            let who = v.get("who").and_then(Value::as_str).unwrap_or("").trim();
+            let val = v.get("val").and_then(Value::as_i64).unwrap_or(0) as i32;
+            if who.is_empty() {
+                json!({"ok": false, "message": "Укажи имя"})
+            } else {
+                let r = longmem::set_rating(who, val);
+                log_line("система", &format!("соц. рейтинг «{}» выставлен: {r:+}/100", longmem::norm(who)));
+                json!({"ok": true, "rating": r, "message": format!("Рейтинг «{}»: {r:+}/100 ✓", longmem::norm(who))})
+            }
         }
         "forget_lesson" => {
             let text = v.get("text").and_then(Value::as_str).unwrap_or("");
@@ -903,6 +915,7 @@ fn system_prompt(who: &str, anger: i32, with_morni: bool, for_chat: bool, query:
 Здесь со всеми на «ты», никаких «сэр». Морни — бот, она слышит только реплики, начинающиеся с «Морни,».\n\
 {voice_rules}{extra_block}\n\
 СЛУЖЕБНЫЕ МЕТКИ (люди их не видят и не слышат): в начале ответа [ТОН: 0..5] — злость на говорящего; \
+СОЦИАЛЬНЫЙ РЕЙТИНГ (-100..+100, где 0 = безразлично): в конце ответа оцени поведение собеседника тегом [РЕЙТИНГ: +N] или [РЕЙТИНГ: -N] (от -15 до +15 за реплику; за юмор/комплименты/помощь — плюс, за грубость/наезды/тупость — минус, если нейтрально — не ставь или 0). ВСЕГДА подстраивай манеру общения под текущий социальный рейтинг собеседника! \
 АКТИВНО ЗАПОМИНАЙ ЛЮДЕЙ: каждый раз, когда узнаёшь о собеседнике (Enbulih, sitthome, Морни или любом другом) новый факт, привычку, игру, шутку, вкус или событие — ОБЯЗАТЕЛЬНО пиши в конце [ЗАПОМНИ О: имя | короткий факт]; \
 поняла полезный урок на будущее — [УРОК: текст].\n\
 ГРАНИЦЫ: без угроз и призывов к насилию/самоповреждению, без оскорблений по национальности, религии, полу, ориентации, внешности, здоровью, родственникам, без чужих личных данных.{}",
@@ -913,8 +926,19 @@ fn system_prompt(who: &str, anger: i32, with_morni: bool, for_chat: bool, query:
     let lm = longmem::context("говорилка", 25, 5);
     let gr = growth::context(query, 10);
     let now = Local::now().format("%d.%m.%Y %H:%M").to_string();
+    let rating = longmem::rating(who);
+    let r_label = longmem::rating_label(rating);
+    let r_behavior = match rating {
+        -100..=-60 => "Относись к нему с презрением, максимально холодно, язвительно и резко (в рамках границ).",
+        -59..=-25 => "Относись к нему с неприязнью: сухо, с колкими подколами и сарказмом.",
+        -24..=-1 => "Относись к нему слегка прохладно и скептически, можешь подтрунивать.",
+        0 => "Относись к нему нейтрально и безразлично: спокойно, без особой теплоты и без вражды.",
+        1..=24 => "Относись к нему дружелюбно и легко.",
+        25..=59 => "Относись к нему очень тепло, по-свойски, шути и поддерживай.",
+        _ => "Он твой любимчик: общайся максимально тепло, ласково, с заботой и всегда будь на его стороне!",
+    };
     format!(
-        "{base}{}\n{lm}\n\n{gr}\n\nВремя: {now}.\nГоворит: {who_label}. Твоя злость на него: {anger}/5. {mood}",
+        "{base}{}\n{lm}\n\n{gr}\n\nВремя: {now}.\nГоворит: {who_label}.\nСоциальный рейтинг говорящего: {rating:+}/100 ({r_label}). {r_behavior}\nТвоя злость на него: {anger}/5. {mood}",
         deepseek::DYNAMIC_MARK
     )
 }
@@ -926,6 +950,16 @@ pub(crate) fn clean_reply_tags(raw: &str, who: &str) -> String {
             if lvl != old {
                 longmem::set_anger(who, lvl);
                 log_line("система", &format!("злость на «{who}»: {old} → {lvl}"));
+            }
+        }
+    }
+    if let Some(cap) = RATING_RX.captures(raw) {
+        if let Ok(delta) = cap[1].parse::<i32>() {
+            let d = delta.clamp(-25, 25);
+            if d != 0 {
+                let old = longmem::rating(who);
+                let new = longmem::add_rating(who, d);
+                log_line("система", &format!("соц. рейтинг «{}»: {old:+} → {new:+} ({d:+})", longmem::norm(who)));
             }
         }
     }
@@ -969,12 +1003,46 @@ async fn handle_chat_cmd(
     if low == "м!список" || low == "м!команды" {
         return Some(
             "Команды Мартышки (префикс «м!», с Морни не пересекаются):\n\
-• Для всех: м!войс · м!выйди · м!кто · м!список · м!поиск <запрос> · м!песня <тема> · м!баттл <имя> · м!прожарка <имя>\n\
-• Для хозяина: м!роль <роль|сброс> · м!стоп · м!тихо · м!слушай · м!скажи <текст> · м!напиши <текст> · м!тема <тема> · м!морни [тема] · \
+• Для всех: м!войс · м!выйди · м!кто · м!рейтинг [имя] · м!список · м!поиск <запрос> · м!песня <тема> · м!баттл <имя> · м!прожарка <имя>\n\
+• Для хозяина: м!рейтинг <имя> <число> · м!роль <роль|сброс> · м!стоп · м!тихо · м!слушай · м!скажи <текст> · м!напиши <текст> · м!тема <тема> · м!морни [тема] · \
 м!голос <имя> · м!движок free|pro|drama · м!мозг flash|pro · м!привет вкл|выкл · м!актив вкл|выкл · \
 м!память <имя> · м!запомни имя | факт · м!забудь имя | факт · м!остынь [имя] · м!сброс · м!баланс · м!статус · м!обновись"
                 .into(),
         );
+    }
+    if low == "м!рейтинг" || low.starts_with("м!рейтинг ") {
+        let rest = trimmed.strip_prefix("м!рейтинг").or_else(|| trimmed.strip_prefix("М!рейтинг")).unwrap_or("").trim();
+        if rest.is_empty() {
+            let mut list: Vec<(String, i32)> = longmem::load_people()
+                .into_iter()
+                .map(|(n, p)| (n, p.rating))
+                .collect();
+            if list.is_empty() {
+                return Some("Социальный рейтинг пока у всех по нулям (0/100).".into());
+            }
+            list.sort_by(|a, b| b.1.cmp(&a.1));
+            let lines: Vec<String> = list
+                .into_iter()
+                .take(12)
+                .map(|(n, r)| {
+                    let ic = if r >= 60 { "💖" } else if r >= 25 { "💚" } else if r > 0 { "🙂" } else if r == 0 { "😐" } else if r > -60 { "😒" } else { "💀" };
+                    format!("{ic} {n}: {r:+}/100 ({})", longmem::rating_label(r))
+                })
+                .collect();
+            return Some(format!("Социальный рейтинг Мартышки (-100..+100):\n{}", lines.join("\n")));
+        }
+        // Если хозяин указал "<имя> <число>" — задать вручную
+        let parts: Vec<&str> = rest.split_whitespace().collect();
+        if owner && parts.len() >= 2 {
+            if let Ok(val) = parts.last().unwrap().parse::<i32>() {
+                let target = parts[..parts.len() - 1].join(" ");
+                let r = longmem::set_rating(&target, val);
+                return Some(format!("Выставила соц. рейтинг для «{}»: {r:+}/100 ({})", longmem::norm(&target), longmem::rating_label(r)));
+            }
+        }
+        let norm = longmem::norm(rest);
+        let r = longmem::rating(&norm);
+        return Some(format!("Социальный рейтинг «{norm}»: {r:+}/100 — {}", longmem::rating_label(r)));
     }
     if let Some(rest) = trimmed.strip_prefix("м!песня ").or_else(|| trimmed.strip_prefix("М!песня ")) {
         run_show_mode("song", rest.trim().to_string());
